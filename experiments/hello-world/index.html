@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello World · Playground</title>
+  <style>
+    body { margin:0; height:100vh; background:#111; overflow:hidden; font-family:system-ui, sans-serif; }
+    .back { position:fixed; top:16px; left:16px; color:#aaa; text-decoration:none; font-size:14px; }
+    .dot { position:fixed; width:40px; height:40px; margin:-20px 0 0 -20px; border-radius:50%;
+      background:#ff5a36; left:50%; top:50%; transition:left .2s ease-out, top .2s ease-out; }
+  </style>
+</head>
+<body>
+  <a class="back" href="../../">← Playground</a>
+  <div class="dot" id="dot"></div>
+  <script>
+    const dot = document.getElementById('dot');
+    addEventListener('pointermove', e => { dot.style.left = e.clientX + 'px'; dot.style.top = e.clientY + 'px'; });
+  </script>
+</body>
+</html>
