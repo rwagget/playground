@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Interactive Gradient · Playground</title>
   <style>
-    body { margin:0; height:100vh; background:#000; overflow:hidden; }
+    body { margin:0; height:100vh; background:#0b0b0e; overflow:hidden; }
     canvas { display:block; width:100vw; height:100vh; touch-action:none; }
   </style>
 </head>
@@ -15,8 +15,8 @@
     // A glowing ribbon of colour flowing left to right. The cursor acts like a rock in a stream:
     // the ribbon's streamlines bend around it (potential flow past a cylinder) and leave a wake.
     // All units are fractions of the window height.
-    const RIBBON = 0.11;  // half-height of the ribbon
-    const ROCK = 0.07;    // radius of the cursor's "rock"
+    const RIBBON = 0.055;  // half-height of the ribbon
+    const ROCK = 0.04;    // radius of the cursor's "rock"
 
     const canvas = document.getElementById('c');
     const gl = canvas.getContext('webgl2', { antialias: false });
@@ -34,6 +34,7 @@
 
       const float H = ${RIBBON.toFixed(4)};
       const float U = .06;  // flow speed
+      const vec3 BG = vec3(.043, .043, .055);  // off-black
 
       float hash(vec2 p) {
         p = fract(p * vec2(123.34, 456.21));
@@ -84,7 +85,7 @@
         }
 
         // Gentle current: domain-warped noise drifting left to right
-        vec2 q = vec2(s - t * U, v);
+        vec2 q = vec2(s - t * U, v * .11 / H);
         vec2 w = vec2(fbm(q * vec2(2., 5.) + vec2(0., t * .05)),
                       fbm(q * vec2(2., 5.) + vec2(5.2, -t * .04)));
         float n = fbm(q * vec2(1.6, 4.) + (w - .5) * 1.2);
@@ -96,17 +97,25 @@
         float e = abs(v) - H;
         float fw = max(fwidth(e), px * .5);
         float inside = 1. - smoothstep(-fw, fw, e);
-        vec3 col = fill * inside;
-        col = mix(col, vec3(1., .35, .15), inside * exp(min(e, 0.) / .035) * .5);
+        vec3 col = mix(BG, fill, inside);
+        col = mix(col, vec3(1., .35, .15), inside * exp(min(e, 0.) / .018) * .5);
 
-        // Glowing orange edges: soft halo, sharp core, hot centre
+        // Light spilling into the background: the ribbon's own colours, then a warm orange halo
+        float out_ = max(e, 0.);
+        col += palette(n * .85 + .15) * exp(-out_ / .12) * .22 * (1. - inside);
+        col += vec3(1., .29, .06) * (exp(-abs(e) / .02) * .5 + exp(-out_ / .08) * .18);
+
+        // Glowing orange edges: sharp core, hot centre
         float width = max(.003, fw);
-        col += vec3(1., .29, .06) * exp(-abs(e) / .03) * .55;
         col += vec3(1., .55, .20) * exp(-pow(e / width, 2.)) * .9;
         col += vec3(1., .88, .60) * exp(-pow(e / (width * .45), 2.)) * .6;
 
-        // The rock itself is a dark gap in the flow
-        if (a > .001) col *= smoothstep(a, a + px * 1.5, r);
+        // The rock: a faint, dim lens with a thin ring
+        if (a > .001) {
+          float m = smoothstep(a - px * 1.5, a, r);
+          col = mix(BG + col * .2, col, m);
+          col += vec3(1., .9, .85) * exp(-pow((r - a) / (px * 1.2), 2.)) * .1;
+        }
 
         // Fine grain dithers away banding
         col += (hash(gl_FragCoord.xy) - .5) * 6. / 255.;
@@ -146,28 +155,23 @@
     addEventListener('resize', resize);
     resize();
 
-    // Pointer → rock. The rock only appears when the pointer is near the ribbon.
-    const target = { x: 0, y: 0, active: false };
-    const rock = { x: 0, y: 0, r: 0 };
+    // Pointer → rock. The rock is always on the page: it starts in the middle of the ribbon,
+    // follows the pointer, and stays where the pointer last was.
+    const target = { x: 0, y: 0.5, moved: false };
+    const rock = { x: 0, y: 0.5, r: 0 };
     const track = e => {
       target.x = e.clientX / innerHeight;
       target.y = 1 - e.clientY / innerHeight;
-      target.active = true;
+      target.moved = true;
     };
     canvas.addEventListener('pointermove', track);
     canvas.addEventListener('pointerdown', track);
-    for (const ev of ['pointerleave', 'pointercancel']) canvas.addEventListener(ev, () => { target.active = false; });
-    canvas.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') target.active = false; });
-
-    const smoothstep = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
 
     function frame(ms) {
-      const dist = Math.abs(target.y - 0.5);
-      const near = target.active ? 1 - smoothstep(RIBBON + ROCK * 0.3, RIBBON + ROCK * 1.3, dist) : 0;
-      if (rock.r < 0.002) { rock.x = target.x; rock.y = target.y; }  // appear where the pointer is
-      rock.x += (target.x - rock.x) * 0.2;
-      rock.y += (target.y - rock.y) * 0.2;
-      rock.r += (ROCK * near - rock.r) * 0.08;
+      if (!target.moved && innerHeight > 0) rock.x = target.x = innerWidth / innerHeight / 2;
+      rock.x += (target.x - rock.x) * 0.3;
+      rock.y += (target.y - rock.y) * 0.3;
+      rock.r += (ROCK - rock.r) * 0.08;
 
       gl.uniform2f(uRes, canvas.width, canvas.height);
       gl.uniform1f(uTime, ms / 1000);
