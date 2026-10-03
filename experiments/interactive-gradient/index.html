@@ -103,8 +103,10 @@
 
         // Light spilling into the background: the ribbon's own colours, then a warm orange halo
         float out_ = max(e, 0.);
-        col += palette(n * .85 + .15) * exp(-out_ / .12) * .22 * (1. - inside);
-        col += vec3(1., .29, .06) * (exp(-abs(e) / .02) * .5 + exp(-out_ / .08) * .18);
+        // (glow colour is sampled along the ribbon so it matches the colours flowing past)
+        vec3 spill = palette(fbm(vec2(s - t * U, 0.) * vec2(1.6, 4.)) * .85 + .15);
+        col += spill * (exp(-out_ / .2) * .32 + exp(-out_ / .5) * .1) * (1. - inside);
+        col += vec3(1., .29, .06) * (exp(-abs(e) / .02) * .5 + exp(-out_ / .12) * .24);
 
         // Glowing orange edges: sharp core, hot centre
         float width = max(.003, fw);
