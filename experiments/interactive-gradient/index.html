@@ -42,7 +42,8 @@
         return fract(p.x * p.y);
       }
       float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p), u = f * f * (3. - 2. * f);
+        // Quintic easing keeps the noise smooth (no creases at cell boundaries)
+        vec2 i = floor(p), f = fract(p), u = f * f * f * (f * (f * 6. - 15.) + 10.);
         return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
                    mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
       }
@@ -50,6 +51,34 @@
         float v = 0., a = .5;
         for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= .5; }
         return v;
+      }
+      // Fewer octaves for the wake so the disturbed edges stay smooth
+      float fbmSoft(vec2 p) {
+        return (noise(p) * .5 + noise(p * 2.03 + vec2(17.1, 9.2)) * .25) / .75;
+      }
+
+      // Maps a point to flow coordinates: x = distance along the flow, y = which streamline
+      // (0 = ribbon centre). The rock bends streamlines around it and leaves a wake.
+      vec2 field(vec2 p) {
+        float s = p.x, v = p.y;
+        float a = uRock.z;
+        if (a > .001) {
+          vec2 rock = vec2(uRock.x, uRock.y - .5);
+          vec2 d = p - rock;
+          float r = length(d);
+          // Influence fades out quickly beyond the circle so the ribbon snaps back to straight
+          float k = r > a ? a * a / (r * r) * (1. - smoothstep(a, a * 2.5, r)) : 1.;
+          v = rock.y + d.y * (1. - k);   // stream function
+          s = rock.x + d.x * (1. + k);   // velocity potential
+          // Wake: a wobble that travels downstream and fades out
+          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 3.)) * exp(-d.y * d.y / (a * a * 2.5));
+          if (wake > .002) {
+            float phase = (d.x - uTime * U * 3.) / a;
+            v += wake * a * (.45 * sin(phase * 2.2) + 1.1 * (fbmSoft(vec2(phase * .8, d.y / a)) - .5));
+            s += wake * a * .8 * (fbmSoft(vec2(phase * .6 + 3.1, d.y / a + 7.3)) - .5);  // churns the colours
+          }
+        }
+        return vec2(s, v);
       }
 
       // navy → blue → violet → magenta → red-orange
@@ -68,23 +97,10 @@
         vec2 p = gl_FragCoord.xy * px - vec2(0., .5);
         float t = uTime;
 
-        // s = distance along the flow, v = which streamline (0 = ribbon centre)
-        float s = p.x, v = p.y;
+        vec2 f = field(p);
+        float s = f.x, v = f.y;
         float a = uRock.z;
-        vec2 rock = vec2(uRock.x, uRock.y - .5);
-        vec2 d = p - rock;
-        float r = length(d);
-        if (a > .001) {
-          // Influence fades out quickly beyond the circle so the ribbon snaps back to straight
-          float k = r > a ? a * a / (r * r) * (1. - smoothstep(a, a * 2.5, r)) : 1.;
-          v = rock.y + d.y * (1. - k);   // stream function
-          s = rock.x + d.x * (1. + k);   // velocity potential
-          // Wake: a wobble that travels downstream and fades out
-          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 3.)) * exp(-d.y * d.y / (a * a * 2.5));
-          float phase = (d.x - t * U * 3.) / a;
-          v += wake * a * (.45 * sin(phase * 2.2) + 1.1 * (fbm(vec2(phase * .8, d.y / a)) - .5));
-          s += wake * a * .8 * (fbm(vec2(phase * .6 + 3.1, d.y / a + 7.3)) - .5);  // churns the colours
-        }
+        float r = length(p - vec2(uRock.x, uRock.y - .5));
 
         // Gentle current: domain-warped noise drifting left to right
         vec2 q = vec2(s - t * U, v * .11 / H);
@@ -97,8 +113,12 @@
 
         // Ribbon body with crisp edges
         float e = abs(v) - H;
-        float fw = max(fwidth(e), px * .5);
-        float inside = 1. - smoothstep(-fw, fw, e);
+        // Distance to the edge in screen pixels, from the field's gradient at this exact pixel,
+        // so edges stay sharp and evenly thick where the flow is squeezed
+        vec2 fx = field(p + vec2(px, 0.)), fy = field(p + vec2(0., px));
+        float g = max(length(vec2(abs(fx.y) - abs(v), abs(fy.y) - abs(v))), 1e-6);
+        float ep = e / g;
+        float inside = 1. - smoothstep(-.75, .75, ep);
         vec3 col = mix(BG, fill, inside);
         col = mix(col, vec3(1., .35, .15), inside * exp(min(e, 0.) / .018) * .5);
 
@@ -110,9 +130,9 @@
         col += vec3(1., .29, .06) * (exp(-abs(e) / .02) * .5 + exp(-out_ / .12) * .24);
 
         // Glowing orange edges: sharp core, hot centre
-        float width = max(.003, fw);
-        col += vec3(1., .55, .20) * exp(-pow(e / width, 2.)) * .9;
-        col += vec3(1., .88, .60) * exp(-pow(e / (width * .45), 2.)) * .6;
+        float width = .003 / px;  // in pixels
+        col += vec3(1., .55, .20) * exp(-pow(ep / width, 2.)) * .9;
+        col += vec3(1., .88, .60) * exp(-pow(ep / max(width * .45, 1.), 2.)) * .6;
 
         // The rock: a faint, dim lens with a thin ring
         if (a > .001) {
