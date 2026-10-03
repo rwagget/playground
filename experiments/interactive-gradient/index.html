@@ -16,7 +16,7 @@
     // the ribbon's streamlines bend around it (potential flow past a cylinder) and leave a wake.
     // All units are fractions of the window height.
     const RIBBON = 0.055;  // half-height of the ribbon
-    const ROCK = 0.04;    // radius of the cursor's "rock"
+    const ROCK = 0.06;    // radius of the cursor's "rock"
 
     const canvas = document.getElementById('c');
     const gl = canvas.getContext('webgl2', { antialias: false });
@@ -76,13 +76,14 @@
         float r = length(d);
         if (a > .001) {
           // Influence fades out quickly beyond the circle so the ribbon snaps back to straight
-          float k = r > a ? a * a / (r * r) * (1. - smoothstep(a, a * 2.2, r)) : 1.;
+          float k = r > a ? a * a / (r * r) * (1. - smoothstep(a, a * 2.5, r)) : 1.;
           v = rock.y + d.y * (1. - k);   // stream function
           s = rock.x + d.x * (1. + k);   // velocity potential
           // Wake: a wobble that travels downstream and fades out
-          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 2.5)) * exp(-d.y * d.y / (a * a * 1.5));
-          float phase = (d.x - t * U * 1.5) / a;
-          v += wake * a * (.25 * sin(phase * 2.2) + .5 * (fbm(vec2(phase * .8, d.y / a)) - .5));
+          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 3.)) * exp(-d.y * d.y / (a * a * 2.5));
+          float phase = (d.x - t * U * 3.) / a;
+          v += wake * a * (.45 * sin(phase * 2.2) + 1.1 * (fbm(vec2(phase * .8, d.y / a)) - .5));
+          s += wake * a * .8 * (fbm(vec2(phase * .6 + 3.1, d.y / a + 7.3)) - .5);  // churns the colours
         }
 
         // Gentle current: domain-warped noise drifting left to right
