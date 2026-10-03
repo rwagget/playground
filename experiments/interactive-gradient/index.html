@@ -5,9 +5,70 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Interactive Gradient · Playground</title>
   <style>
-    body { margin:0; height:100vh; font-family:system-ui, sans-serif; }
+    body { margin:0; height:100vh; background:#000; overflow:hidden; }
+    svg { display:block; width:100vw; height:100vh; }
   </style>
 </head>
 <body>
+  <svg viewBox="0 0 626 417" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <!-- Edge of the glow: sweeps down from the left, dips, and rises up the right side -->
+      <path id="edge" d="M -10 70 C 30 170, 110 245, 240 272 S 390 322, 465 322 S 565 285, 595 200 S 615 120, 640 60" />
+
+      <clipPath id="region">
+        <path d="M -10 70 C 30 170, 110 245, 240 272 S 390 322, 465 322 S 565 285, 595 200 S 615 120, 640 60 L 640 -20 L -20 -20 Z" />
+      </clipPath>
+
+      <linearGradient id="base" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse"
+        gradientTransform="scale(1 330)">
+        <stop offset="0" stop-color="#04041a" />
+        <stop offset=".35" stop-color="#1c1a9c" />
+        <stop offset=".6" stop-color="#5512b8" />
+        <stop offset=".82" stop-color="#c8165e" />
+        <stop offset="1" stop-color="#ff4a26" />
+      </linearGradient>
+      <radialGradient id="blue" cx="330" cy="140" r="210" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#3b3ae6" stop-opacity=".7" />
+        <stop offset="1" stop-color="#3b3ae6" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="red" cx="30" cy="210" r="230" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#ff1a2e" stop-opacity=".95" />
+        <stop offset=".6" stop-color="#d0104a" stop-opacity=".45" />
+        <stop offset="1" stop-color="#d0104a" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="shadeL" cx="0" cy="0" r="190" gradientUnits="userSpaceOnUse">
+        <stop offset=".2" stop-color="#000" />
+        <stop offset="1" stop-color="#000" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="shadeR" cx="626" cy="0" r="230" gradientUnits="userSpaceOnUse">
+        <stop offset=".15" stop-color="#000" stop-opacity=".95" />
+        <stop offset="1" stop-color="#000" stop-opacity="0" />
+      </radialGradient>
+
+      <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="6" /></filter>
+      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9" /></filter>
+      <filter id="core" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2" /></filter>
+    </defs>
+
+    <!-- Colored light above the edge -->
+    <g filter="url(#soft)">
+      <g clip-path="url(#region)">
+        <rect x="-20" y="-20" width="680" height="460" fill="url(#base)" />
+        <rect x="-20" y="-20" width="680" height="460" fill="url(#blue)" />
+        <rect x="-20" y="-20" width="680" height="460" fill="url(#red)" />
+        <rect x="-20" y="-20" width="680" height="460" fill="url(#shadeL)" />
+        <rect x="-20" y="-20" width="680" height="460" fill="url(#shadeR)" />
+      </g>
+    </g>
+
+    <!-- Faint secondary ridge below the edge -->
+    <path d="M 160 318 C 260 300, 380 342, 470 342 S 575 300, 612 160"
+      fill="none" stroke="#6a2412" stroke-width="7" opacity=".55" filter="url(#glow)" />
+
+    <!-- Glowing orange edge -->
+    <use href="#edge" fill="none" stroke="#ff5a14" stroke-width="22" opacity=".8" filter="url(#glow)" />
+    <use href="#edge" fill="none" stroke="#ff9a2e" stroke-width="5" filter="url(#core)" />
+    <use href="#edge" fill="none" stroke="#ffd27a" stroke-width="1.5" opacity=".5" filter="url(#core)" />
+  </svg>
 </body>
 </html>
