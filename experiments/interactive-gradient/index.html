@@ -104,19 +104,23 @@
 
         // Gentle current: domain-warped noise drifting left to right
         vec2 q = vec2(s - t * U, v * .11 / H);
-        vec2 w = vec2(fbm(q * vec2(2., 5.) + vec2(0., t * .05)),
-                      fbm(q * vec2(2., 5.) + vec2(5.2, -t * .04)));
+        vec2 w = vec2(fbmSoft(q * vec2(2., 5.) + vec2(0., t * .05)),
+                      fbmSoft(q * vec2(2., 5.) + vec2(5.2, -t * .04)));
         float n = fbm(q * vec2(1.6, 4.) + (w - .5) * 1.2);
         float edgeDist = abs(v) / H;
         vec3 fill = palette(n * .85 + edgeDist * edgeDist * .45 - .1);
-        fill *= .85 + .3 * fbm(q * vec2(3., 8.) + w * 2. + t * .03);
+        fill *= .85 + .3 * fbmSoft(q * vec2(3., 8.) + w * 2. + t * .03);
 
         // Ribbon body with crisp edges
         float e = abs(v) - H;
         // Distance to the edge in screen pixels, from the field's gradient at this exact pixel,
         // so edges stay sharp and evenly thick where the flow is squeezed
-        vec2 fx = field(p + vec2(px, 0.)), fy = field(p + vec2(0., px));
-        float g = max(length(vec2(abs(fx.y) - abs(v), abs(fy.y) - abs(v))), 1e-6);
+        // (only needed near an edge; elsewhere the undisturbed gradient is fine)
+        float g = px;
+        if (abs(e) < .04) {
+          vec2 fx = field(p + vec2(px, 0.)), fy = field(p + vec2(0., px));
+          g = max(length(vec2(abs(fx.y) - abs(v), abs(fy.y) - abs(v))), 1e-6);
+        }
         float ep = e / g;
         float inside = 1. - smoothstep(-.75, .75, ep);
         vec3 col = mix(BG, fill, inside);
@@ -125,7 +129,7 @@
         // Light spilling into the background: the ribbon's own colours, then a warm orange halo
         float out_ = max(e, 0.);
         // (glow colour is sampled along the ribbon so it matches the colours flowing past)
-        vec3 spill = palette(fbm(vec2(s - t * U, 0.) * vec2(1.6, 4.)) * .85 + .15);
+        vec3 spill = palette(fbmSoft(vec2(s - t * U, 0.) * vec2(1.6, 4.)) * .85 + .15);
         col += spill * (exp(-out_ / .2) * .32 + exp(-out_ / .5) * .1) * (1. - inside);
         col += vec3(1., .29, .06) * (exp(-abs(e) / .02) * .5 + exp(-out_ / .12) * .24);
 
@@ -170,8 +174,11 @@
     const uTime = gl.getUniformLocation(prog, 'uTime');
     const uRock = gl.getUniformLocation(prog, 'uRock');
 
+    // Render scale starts at the screen's pixel density (max 2) and steps down if frames
+    // run slow, e.g. while screen recording.
+    let scale = Math.min(window.devicePixelRatio || 1, 2);
     function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = scale;
       canvas.width = Math.round(innerWidth * dpr);
       canvas.height = Math.round(innerHeight * dpr);
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -191,7 +198,22 @@
     canvas.addEventListener('pointermove', track);
     canvas.addEventListener('pointerdown', track);
 
+    let last = 0, slow = 0, frames = 0;
     function frame(ms) {
+      requestAnimationFrame(frame);
+      // Cap at ~60fps: the flow is slow, so higher refresh rates only cost GPU time
+      const dt = ms - last;
+      if (dt < 12) return;
+      last = ms;
+      if (dt < 250) {  // ignore gaps from background tabs
+        frames++;
+        if (dt > 24) slow++;
+        if (frames >= 45) {
+          if (slow > frames / 3 && scale > 1) { scale = Math.max(1, scale - 0.25); resize(); }
+          frames = slow = 0;
+        }
+      }
+
       if (!target.moved && innerHeight > 0) rock.x = target.x = innerWidth / innerHeight / 2;
       rock.x += (target.x - rock.x) * 0.3;
       rock.y += (target.y - rock.y) * 0.3;
@@ -201,7 +223,6 @@
       gl.uniform1f(uTime, ms / 1000);
       gl.uniform3f(uRock, rock.x, rock.y, rock.r);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   </script>
