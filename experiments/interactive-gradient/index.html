@@ -6,69 +6,103 @@
   <title>Interactive Gradient · Playground</title>
   <style>
     body { margin:0; height:100vh; background:#000; overflow:hidden; }
-    svg { display:block; width:100vw; height:100vh; }
+    canvas { display:block; width:100vw; height:100vh; }
   </style>
 </head>
 <body>
-  <svg viewBox="0 0 626 417" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-    <defs>
-      <!-- Edge of the glow: sweeps down from the left, dips, and rises up the right side -->
-      <path id="edge" d="M -10 70 C 30 170, 110 245, 240 272 S 390 322, 465 322 S 565 285, 595 200 S 615 120, 640 60" />
+  <canvas id="c"></canvas>
+  <script>
+    // Drawn at full device resolution, then dithered with fine noise so the gradients don't band.
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
 
-      <clipPath id="region">
-        <path d="M -10 70 C 30 170, 110 245, 240 272 S 390 322, 465 322 S 565 285, 595 200 S 615 120, 640 60 L 640 -20 L -20 -20 Z" />
-      </clipPath>
+    // Design space: 626 × 417, stretched to fill the window.
+    const W = 626, H = 417;
 
-      <linearGradient id="base" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse"
-        gradientTransform="scale(1 330)">
-        <stop offset="0" stop-color="#04041a" />
-        <stop offset=".35" stop-color="#1c1a9c" />
-        <stop offset=".6" stop-color="#5512b8" />
-        <stop offset=".82" stop-color="#c8165e" />
-        <stop offset="1" stop-color="#ff4a26" />
-      </linearGradient>
-      <radialGradient id="blue" cx="330" cy="140" r="210" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="#3b3ae6" stop-opacity=".7" />
-        <stop offset="1" stop-color="#3b3ae6" stop-opacity="0" />
-      </radialGradient>
-      <radialGradient id="red" cx="30" cy="210" r="230" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="#ff1a2e" stop-opacity=".95" />
-        <stop offset=".6" stop-color="#d0104a" stop-opacity=".45" />
-        <stop offset="1" stop-color="#d0104a" stop-opacity="0" />
-      </radialGradient>
-      <radialGradient id="shadeL" cx="0" cy="0" r="190" gradientUnits="userSpaceOnUse">
-        <stop offset=".2" stop-color="#000" />
-        <stop offset="1" stop-color="#000" stop-opacity="0" />
-      </radialGradient>
-      <radialGradient id="shadeR" cx="626" cy="0" r="230" gradientUnits="userSpaceOnUse">
-        <stop offset=".15" stop-color="#000" stop-opacity=".95" />
-        <stop offset="1" stop-color="#000" stop-opacity="0" />
-      </radialGradient>
+    // Glowing edge: sweeps down from the left, dips, and rises up the right side.
+    const EDGE = [[-10, 70], [30, 170, 110, 245, 240, 272], [370, 299, 390, 322, 465, 322],
+                  [540, 322, 565, 285, 595, 200], [625, 115, 615, 120, 640, 60]];
+    // Faint secondary ridge below the edge.
+    const RIDGE = [[160, 318], [260, 300, 380, 342, 470, 342], [560, 342, 575, 300, 612, 160]];
 
-      <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="6" /></filter>
-      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9" /></filter>
-      <filter id="core" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2" /></filter>
-    </defs>
+    function path(points, sx, sy, close) {
+      const p = new Path2D();
+      const [[x0, y0], ...curves] = points;
+      p.moveTo(x0 * sx, y0 * sy);
+      for (const c of curves) p.bezierCurveTo(c[0] * sx, c[1] * sy, c[2] * sx, c[3] * sy, c[4] * sx, c[5] * sy);
+      if (close) { p.lineTo(660 * sx, -40 * sy); p.lineTo(-40 * sx, -40 * sy); p.closePath(); }
+      return p;
+    }
 
-    <!-- Colored light above the edge -->
-    <g filter="url(#soft)">
-      <g clip-path="url(#region)">
-        <rect x="-20" y="-20" width="680" height="460" fill="url(#base)" />
-        <rect x="-20" y="-20" width="680" height="460" fill="url(#blue)" />
-        <rect x="-20" y="-20" width="680" height="460" fill="url(#red)" />
-        <rect x="-20" y="-20" width="680" height="460" fill="url(#shadeL)" />
-        <rect x="-20" y="-20" width="680" height="460" fill="url(#shadeR)" />
-      </g>
-    </g>
+    function radial(cx, cy, r, stops) {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      for (const [o, c] of stops) g.addColorStop(o, c);
+      return g;
+    }
 
-    <!-- Faint secondary ridge below the edge -->
-    <path d="M 160 318 C 260 300, 380 342, 470 342 S 575 300, 612 160"
-      fill="none" stroke="#6a2412" stroke-width="7" opacity=".55" filter="url(#glow)" />
+    function draw() {
+      const dpr = window.devicePixelRatio || 1;
+      const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
+      canvas.width = cw; canvas.height = ch;
+      const sx = innerWidth / W, sy = innerHeight / H;
+      const u = Math.sqrt(sx * sy); // stroke/blur scale
 
-    <!-- Glowing orange edge -->
-    <use href="#edge" fill="none" stroke="#ff5a14" stroke-width="22" opacity=".8" filter="url(#glow)" />
-    <use href="#edge" fill="none" stroke="#ff9a2e" stroke-width="5" filter="url(#core)" />
-    <use href="#edge" fill="none" stroke="#ffd27a" stroke-width="1.5" opacity=".5" filter="url(#core)" />
-  </svg>
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+      // Colored light above the edge
+      ctx.save();
+      ctx.clip(path(EDGE, sx, sy, true));
+      ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
+      const base = ctx.createLinearGradient(0, 0, 0, 330);
+      [[0, '#04041a'], [.35, '#1c1a9c'], [.6, '#5512b8'], [.82, '#c8165e'], [1, '#ff4a26']]
+        .forEach(([o, c]) => base.addColorStop(o, c));
+      const layers = [
+        base,
+        radial(330, 140, 210, [[0, 'rgba(59,58,230,.7)'], [1, 'rgba(59,58,230,0)']]),
+        radial(30, 210, 230, [[0, 'rgba(255,26,46,.95)'], [.6, 'rgba(208,16,74,.45)'], [1, 'rgba(208,16,74,0)']]),
+        radial(0, 0, 190, [[.2, '#000'], [1, 'rgba(0,0,0,0)']]),
+        radial(626, 0, 230, [[.15, 'rgba(0,0,0,.95)'], [1, 'rgba(0,0,0,0)']]),
+      ];
+      for (const fill of layers) { ctx.fillStyle = fill; ctx.fillRect(-40, -40, 720, 500); }
+      ctx.restore();
+
+      // Strokes in screen space so line widths stay even when stretched
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineCap = 'round';
+      const stroke = (p, color, width, blur, alpha = 1) => {
+        ctx.filter = blur ? `blur(${blur}px)` : 'none';
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.stroke(p);
+      };
+      const edge = path(EDGE, sx, sy), ridge = path(RIDGE, sx, sy);
+      stroke(ridge, '#6a2412', 6 * u, 6 * u, .5);
+      stroke(edge, '#ff4a10', 16 * u, 10 * u, .75);  // wide halo
+      stroke(edge, '#ff7a1c', 5 * u, 2.5 * u, .9);   // inner glow
+      stroke(edge, '#ffa040', 2 * u, 0);             // crisp core
+      stroke(edge, '#ffe0a0', .6 * u, 0, .7);        // hot center
+      ctx.filter = 'none';
+      ctx.globalAlpha = 1;
+
+      // Dither: a few levels of monochrome noise per pixel breaks up 8-bit banding
+      const img = ctx.getImageData(0, 0, cw, ch);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (Math.random() - .5) * 10;
+        d[i] += n; d[i + 1] += n; d[i + 2] += n;
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    let pending = 0;
+    addEventListener('resize', () => {
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(draw);
+    });
+    draw();
+  </script>
 </body>
 </html>
