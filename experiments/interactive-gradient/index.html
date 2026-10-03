@@ -75,11 +75,12 @@
         vec2 d = p - rock;
         float r = length(d);
         if (a > .001) {
-          float k = r > a ? a * a / (r * r) : 1.;
+          // Influence fades out quickly beyond the circle so the ribbon snaps back to straight
+          float k = r > a ? a * a / (r * r) * (1. - smoothstep(a, a * 2.2, r)) : 1.;
           v = rock.y + d.y * (1. - k);   // stream function
           s = rock.x + d.x * (1. + k);   // velocity potential
           // Wake: a wobble that travels downstream and fades out
-          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 6.)) * exp(-d.y * d.y / (a * a * 2.5));
+          float wake = smoothstep(0., a, d.x) * exp(-d.x / (a * 2.5)) * exp(-d.y * d.y / (a * a * 1.5));
           float phase = (d.x - t * U * 1.5) / a;
           v += wake * a * (.25 * sin(phase * 2.2) + .5 * (fbm(vec2(phase * .8, d.y / a)) - .5));
         }
