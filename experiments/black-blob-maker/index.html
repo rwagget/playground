@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Black Blob Maker · Playground</title>
+  <style>
+    body { margin:0; height:100vh; background:#FDDC5C; overflow:hidden; font-family:system-ui, sans-serif;
+      user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+    canvas { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    const BG = [0xFD / 255, 0xDC / 255, 0x5C / 255];
+    const MAX_BLOBS = 512;
+
+    const canvas = document.getElementById('c');
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+
+    const vert = `#version 300 es
+      in vec2 a;
+      void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
+
+    // Blobs are circles joined with a smooth min, then "inflated" into a 3D
+    // surface (sphere profile) so they can be shaded like glossy black glass.
+    const frag = `#version 300 es
+      precision highp float;
+      uniform sampler2D uBlobs;   // x, y, radius (CSS px), unused
+      uniform int uCount;
+      uniform vec2 uRes;          // device px
+      uniform float uScale;       // device px per CSS px
+      uniform vec3 uBg;
+      out vec4 o;
+
+      float band(float x, float lo, float hi, float soft) {
+        return smoothstep(lo - soft, lo + soft, x) * (1.0 - smoothstep(hi - soft, hi + soft, x));
+      }
+
+      float hash(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+      }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
+                   mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+      }
+      // Only a few octaves: no fine detail, so the reflection reads as soft and blurred.
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 3; i++) { v += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
+        return v / 0.875;
+      }
+
+      // What sits in front of the blobs (behind the viewer): an overcast sky
+      // over a ragged treeline and dark ground. It shows up in the middle of
+      // each blob, split by the horizon, like the oily reflection in a photo.
+      vec3 outdoor(vec3 R) {
+        float az = atan(R.x, R.z);
+        float horizon = 0.08 * fbm(vec2(az * 3.0, 4.7)) + 0.05 * fbm(vec2(az * 8.0, 1.3)) - 0.05;
+        vec2 q = R.xz / (abs(R.y) + 0.35);
+        float clouds = fbm(q * 0.9 + vec2(3.1, 0.0));
+        vec3 sky = mix(vec3(0.45, 0.46, 0.52), vec3(1.7, 1.68, 1.72), smoothstep(0.3, 0.8, clouds));
+        sky *= 1.0 - 0.4 * smoothstep(0.1, 0.9, R.y);                                      // darker overhead
+        sky += vec3(1.3, 1.26, 1.24) * exp(-abs(R.y - horizon) * 5.0);                // bright haze at horizon
+        vec3 ground = vec3(0.025, 0.022, 0.02) + vec3(0.05, 0.035, 0.02) * fbm(vec2(az * 5.0, R.y * 10.0))
+                    * smoothstep(-0.25, 0.0, R.y);
+        return mix(ground, sky, smoothstep(horizon - 0.16, horizon + 0.12, R.y));
+      }
+
+      // Plus a studio behind the blobs: yellow floor, a long softbox overhead
+      // and a couple of warm strip lights, which show as arcs on the rims.
+      vec3 env(vec3 R) {
+        vec3 warm = vec3(1.0, 0.55, 0.12);
+        vec3 room = mix(vec3(0.02), vec3(0.16), smoothstep(-0.1, 0.5, R.y));
+        vec3 c = mix(room, outdoor(R), smoothstep(-0.35, 0.6, R.z));
+        float behind = smoothstep(0.15, -0.25, R.z);
+        c += uBg * 0.6 * smoothstep(-0.3, -0.9, R.y) * behind;                         // yellow floor bounce
+        c += warm * 0.4 * band(R.y, 0.45, 0.98, 0.15) * smoothstep(0.5, -0.4, R.x) * behind; // amber halo round softbox
+        c += vec3(1.0, 0.96, 0.85) * 3.2 * band(R.y, 0.66, 0.78, 0.015)
+             * smoothstep(0.15, -0.2, R.x) * behind;                                          // softbox, top left
+        c += warm * 2.2 * band(R.y, -0.72, -0.6, 0.03) * smoothstep(0.0, -0.3, R.x) * behind; // warm strip, lower left
+        c += warm * 1.6 * band(R.y, 0.2, 0.5, 0.05) * smoothstep(0.35, 0.5, R.x) * behind;   // warm kicker, upper right
+        return c;
+      }
+
+      void main() {
+        vec2 p = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale;
+        float d = 1e5, r = 1.0;
+        vec2 g = vec2(0.0);
+
+        for (int i = 0; i < uCount; i++) {
+          vec4 b = texelFetch(uBlobs, ivec2(i, 0), 0);
+          vec2 v = p - b.xy;
+          float l = length(v);
+          float di = l - b.z;
+          vec2 gi = l > 1e-4 ? v / l : vec2(0.0);
+          if (i == 0) { d = di; g = gi; r = b.z; continue; }
+          float k = max(0.3 * min(r, b.z), 1e-3); // how far the melt reaches
+          if (di - d > k) continue;
+          float h = clamp(0.5 + 0.5 * (d - di) / k, 0.0, 1.0); // weight of the new blob
+          d = mix(d, di, h) - k * h * (1.0 - h);
+          g = mix(g, gi, h);
+          r = mix(r, b.z, h);
+        }
+
+        float cover = clamp(0.5 - d * uScale, 0.0, 1.0);
+        if (cover <= 0.0) { o = vec4(uBg, 1.0); return; }
+
+        float s = clamp(-d, 0.0, r);
+        float z = sqrt(max(s * (2.0 * r - s), 0.0));
+        vec3 N = normalize(vec3((r - s) * g.x, -(r - s) * g.y, z) + vec3(0.0, 0.0, 1e-5));
+        // Gentle lumps in the surface so reflections smear and ripple like oil.
+        vec2 w = p / 70.0;
+        N = normalize(N + 0.06 * N.z * vec3(fbm(w) - 0.5, fbm(w + 9.3) - 0.5, 0.0));
+        vec3 R = reflect(vec3(0.0, 0.0, -1.0), N);
+        float fres = 0.12 + 0.88 * pow(1.0 - N.z, 4.0);
+
+        vec3 col = vec3(0.01) + 0.012 * max(dot(N, normalize(vec3(-0.4, 0.6, 0.7))), 0.0);
+        col += fres * env(R);
+        o = vec4(mix(uBg, col, cover), 1.0);
+      }`;
+
+    function shader(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, vert));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const aLoc = gl.getAttribLocation(prog, 'a');
+    gl.enableVertexAttribArray(aLoc);
+    gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const data = new Float32Array(MAX_BLOBS * 4);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, MAX_BLOBS, 1, 0, gl.RGBA, gl.FLOAT, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    const u = name => gl.getUniformLocation(prog, name);
+    const uCount = u('uCount'), uRes = u('uRes'), uScale = u('uScale');
+    gl.uniform1i(u('uBlobs'), 0);
+    gl.uniform3fv(u('uBg'), BG);
+
+    let scale = 1;
+    function resize() {
+      scale = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.round(innerWidth * scale);
+      canvas.height = Math.round(innerHeight * scale);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      requestFrame();
+    }
+
+    // --- Blobs ---------------------------------------------------------------
+    // Each blob's radius chases a target on a springy, underdamped curve, so it
+    // wobbles a little as it grows and when you let go.
+    const blobs = [];
+    const holding = new Map(); // pointerId -> blob
+
+    const maxRadius = () => 0.3 * Math.min(innerWidth, innerHeight);
+    const MIN_RADIUS = 10;
+    const GROW_TIME = 1.6; // seconds to reach ~63% of max size
+
+    function step(dt, now) {
+      let busy = holding.size > 0;
+      for (const b of blobs) {
+        if (b.held) {
+          const t = (now - b.start) / 1000;
+          b.target = MIN_RADIUS + (maxRadius() - MIN_RADIUS) * (1 - Math.exp(-t / GROW_TIME));
+        }
+        if (b.settled) continue;
+        b.v += (180 * (b.target - b.r) - 12 * b.v) * dt;
+        b.r += b.v * dt;
+        if (!b.held && Math.abs(b.target - b.r) < 0.02 && Math.abs(b.v) < 0.05) {
+          b.r = b.target; b.v = 0; b.settled = true;
+        } else busy = true;
+      }
+      return busy;
+    }
+
+    function draw() {
+      for (let i = 0; i < blobs.length; i++) {
+        data[i * 4] = blobs[i].x;
+        data[i * 4 + 1] = blobs[i].y;
+        data[i * 4 + 2] = Math.max(blobs[i].r, 0);
+      }
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, MAX_BLOBS, 1, gl.RGBA, gl.FLOAT, data);
+      gl.uniform1i(uCount, blobs.length);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uScale, scale);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    // Only render while something is changing; a still scene costs nothing.
+    let running = false, last = 0;
+    function requestFrame() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      requestAnimationFrame(frame);
+    }
+    function frame(now) {
+      const dt = Math.min((now - last) / 1000, 1 / 30);
+      last = now;
+      // Sub-step the spring so it stays stable at low frame rates.
+      let busy = false;
+      for (let i = 0; i < 4; i++) busy = step(dt / 4, now) || busy;
+      draw();
+      if (busy) requestAnimationFrame(frame);
+      else running = false;
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      if (blobs.length >= MAX_BLOBS) return;
+      const b = { x: e.clientX, y: e.clientY, r: 0, v: 0, target: MIN_RADIUS,
+                  start: performance.now(), held: true, settled: false };
+      blobs.push(b);
+      holding.set(e.pointerId, b);
+      canvas.setPointerCapture(e.pointerId);
+      requestFrame();
+    });
+    function release(e) {
+      const b = holding.get(e.pointerId);
+      if (!b) return;
+      b.held = false;
+      holding.delete(e.pointerId);
+      requestFrame();
+    }
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    addEventListener('resize', resize);
+    resize();
+  </script>
+</body>
+</html>

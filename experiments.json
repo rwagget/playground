@@ -10,5 +10,11 @@
     "title": "Interactive Gradient",
     "description": "A glowing ribbon of colour that flows around your cursor like water around a rock.",
     "date": "2026-10-03"
+  },
+  {
+    "slug": "black-blob-maker",
+    "title": "Black Blob Maker",
+    "description": "Click and hold to grow glossy black blobs that melt into their neighbours.",
+    "date": "2026-10-03"
   }
 ]
