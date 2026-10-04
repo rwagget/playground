@@ -1,11 +1,5 @@
 [
   {
-    "slug": "hello-world",
-    "title": "Hello World",
-    "description": "A starter experiment: a dot that follows your cursor.",
-    "date": "2026-09-17"
-  },
-  {
     "slug": "interactive-gradient",
     "title": "Interactive Gradient",
     "description": "A glowing ribbon of colour that flows around your cursor like water around a rock.",
