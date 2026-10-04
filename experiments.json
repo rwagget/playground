@@ -16,5 +16,11 @@
     "title": "Black Blob Maker",
     "description": "Click and hold to grow glossy black blobs that melt into their neighbours.",
     "date": "2026-10-03"
+  },
+  {
+    "slug": "ocean-landing-page",
+    "title": "Ocean Landing Page",
+    "description": "A misty, dark sea in real 3D — click to raise a glowing glass portal out of the water.",
+    "date": "2026-10-04"
   }
 ]

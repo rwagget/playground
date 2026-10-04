@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ocean Landing Page · Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Jura:wght@300&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; height:100vh; background:#0b0d10; overflow:hidden; }
+    canvas { display:block; width:100vw; height:100vh; }
+    .enter {
+      position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+      /* letter-spacing also trails the last letter; matching left padding keeps the text centred */
+      padding:16px 24px 16px calc(24px + .5em);
+      background:none; border:0; cursor:pointer; white-space:nowrap;
+      font:300 13px/1 'Jura', sans-serif; letter-spacing:.5em; text-transform:uppercase;
+      color:rgba(225, 230, 236, .6); transition:color .4s ease, opacity .8s ease;
+    }
+    .enter:hover, .enter:focus-visible { color:rgba(240, 244, 248, .95); outline:none; }
+    .enter.gone { opacity:0; pointer-events:none; }
+
+    /* Text inside the portal. --pw/--ph are the portal's size on screen (set from JS), and all
+       type and spacing scale with its width so the layout always fits the glass. */
+    .card {
+      position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+      width:var(--pw); height:var(--ph); box-sizing:border-box; padding:calc(var(--pw) * .153);
+      font:400 calc(var(--pw) * .0392)/1.32 'Inter', sans-serif; color:#dcdcdc;
+      text-shadow:0 1px 14px rgba(20, 8, 40, .35);
+      -webkit-font-smoothing:antialiased; visibility:hidden;
+    }
+    .card.show { visibility:visible; }
+    /* Each block fades and un-blurs in turn, top to bottom */
+    .card > * {
+      margin:0 0 1.05em; opacity:0; filter:blur(calc(var(--pw) * .037));
+      transition:opacity .9s ease, filter .9s ease; transition-delay:calc(var(--i) * .13s);
+    }
+    .card.show > * { opacity:1; filter:blur(0); }
+    .card h1 { font-size:1.55em; font-weight:600; line-height:1.1; letter-spacing:-.01em; margin-bottom:.4em; }
+    .card .role { font-size:.85em; font-weight:300; color:#cecece; margin-bottom:1.9em; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <button class="enter" type="button">Click to enter</button>
+  <article class="card">
+    <h1 style="--i:0">Ryan Wagget</h1>
+    <p class="role" style="--i:1">A designer who builds</p>
+    <p style="--i:2">I started with a blank canvas, a head full of ideas, and no idea where any of it would lead.</p>
+    <p style="--i:3">What began as an obsession with making things slowly turned into a career, a collection of projects I’m incredibly proud of, and a community of people who made the journey far more meaningful than I ever expected.</p>
+    <p style="--i:4">Years later, I’m still learning, still making, and still incredibly grateful I decided to give this a shot.</p>
+  </article>
+  <script>
+    // A misty, dark sea at dusk. The water is a real 3D mesh displaced by Gerstner waves in the
+    // vertex shader; finer ripples only bend the normals in the fragment shader. Units are metres,
+    // the camera floats a few metres above the water looking toward -z.
+    //
+    // Clicking the button raises a glowing glass portal out of a point behind it. The portal
+    // stands in the water, so the scene shaders light the waves and fog with it; a final pass
+    // draws the frame and the frosted glass (a blurred copy of the scene) on top.
+    const CAM_HEIGHT = 3.0;
+    const PITCH = 11 * Math.PI / 180;  // tilt up, which puts the horizon low in the frame
+    const NEAR = 0.5, FAR = 6000;      // clip planes
+    const GRID_ROWS = 300, GRID_COLS = 320;
+    const GRID_NEAR = 3, GRID_FAR = 4500;
+
+    // The portal sits square-on to the camera (leaning back with its tilt, so it shows as a true
+    // rectangle with no keystone), centred exactly where the camera looks, behind the button.
+    // It's tall enough for its bottom edge to dip just below the waterline.
+    const PORTAL_DIST = 61;
+    const PORTAL_POS = [0, CAM_HEIGHT + PORTAL_DIST * Math.sin(PITCH), -PORTAL_DIST * Math.cos(PITCH)];
+    const PORTAL_HH = (PORTAL_POS[1] + 0.4) / Math.cos(PITCH), PORTAL_HW = PORTAL_HH * 0.76;
+    const LINE_S = 0.45, RISE_S = 0.55;  // seconds to draw the line, then to raise the box
+
+    const canvas = document.getElementById('c');
+    const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
+
+    const common = `#version 300 es
+      precision highp float;
+      uniform vec3 uCam, uRight, uUp, uFwd, uSun;
+      uniform vec2 uTan, uRes;
+      uniform float uTime;
+      uniform vec4 uPortal;     // current half width, half height (m), glow strength
+      uniform vec3 uPortalPos;  // centre of the portal; it faces the camera (axes uRight, uUp)
+
+      // Big swells, shared by the mesh and the normals.
+      // x: heading (radians, 0 = toward the camera), y: wavelength (m), z: amplitude (m)
+      const int NW = 6;
+      const vec3 WAVES[NW] = vec3[](
+        vec3( 0.00, 52.0, 0.34),
+        vec3( 0.55, 31.0, 0.21),
+        vec3(-0.40, 19.0, 0.13),
+        vec3( 0.95, 12.0, 0.075),
+        vec3(-0.80,  7.6, 0.045),
+        vec3( 0.30,  4.7, 0.026));
+      const float STEEP = 0.13;  // per-wave crest sharpness; the sum must stay below 1
+
+      vec2 waveDir(float a) { return vec2(sin(a), cos(a)); }
+      float waveK(float len) { return 6.2831853 / len; }
+      float wavePhase(vec2 D, float k, vec2 p) { return k * dot(D, p) - sqrt(9.8 * k) * uTime; }
+
+      vec3 sky(vec3 d) {
+        float e = max(d.y, 0.);
+        vec3 col = mix(vec3(.034, .04, .048), vec3(.19, .22, .255), exp(-e * 6.));
+        col += vec3(.06, .075, .09) * exp(-e * 30.);  // cool mist hugging the horizon
+        // Blue cast on the side away from the light
+        float left = smoothstep(.15, -.55, d.x / max(length(d.xz), 1e-3));
+        col += vec3(-.005, .025, .07) * left * exp(-e * 3.);
+        // Warm light low on the right, stretched sideways like light through haze
+        vec3 q = normalize(vec3(d.x, e * 2.2, d.z));
+        vec3 s = normalize(vec3(uSun.x, uSun.y * 2.2, uSun.z));
+        float g = max(dot(q, s), 0.);
+        col += vec3(.36, .25, .21) * pow(g, 6.) * exp(-e * 3.5);
+        col += vec3(.45, .34, .30) * pow(g, 40.);
+        col += vec3(.85, .78, .72) * pow(g, 320.);
+        return col;
+      }
+    `;
+
+    // Fragment-only helpers
+    const post = `
+      uniform sampler2D uNoise;
+
+      // Banks of mist hanging as vertical sheets at a few distances in front of the camera,
+      // stopping at whatever is behind them (the water, or nothing for the sky). Wind pushes
+      // every sheet sideways at the same speed in metres, so nearer ones sweep past faster.
+      // Returns (opacity, brightness): thick cores catch more light than thin edges.
+      vec2 mist(vec3 d, float maxDist) {
+        // Densest at the water and horizon, thinning to nothing toward the top of the screen
+        float fade = exp(-max(d.y, 0.) * 7.);
+        if (fade < .01) return vec2(0.);
+        float acc = 0., shade = 0.;
+        float dz = max(-d.z, 1e-3);
+        for (int i = 0; i < 6; i++) {
+          float D = 30. * pow(1.9, float(i));
+          float t = D / dz;
+          // Each sheet stands in for a slab of fog around it. Count only the part of the slab in
+          // front of the water, so the fog thins smoothly into the waves instead of being sliced
+          // off where the sheet meets them.
+          float inFront = clamp((maxDist - t * .4) / (t * 1.2), 0., 1.);
+          if (inFront <= 0.) break;
+          vec3 p = uCam + d * t;
+          vec2 a = p.xy / D;  // roughly the angle the point is seen at
+          float o = float(i) * .37;
+          vec2 uv = vec2(a.x * .7 + uTime * 2.4 / D + o, a.y * 2.5 + o * 1.7);
+          // A slow, coarse noise bends the lookup so the banks curl and billow as they drift
+          vec2 warp = vec2(texture(uNoise, uv * .5 + vec2(uTime * .005, o)).r,
+                           texture(uNoise, uv * .5 + vec2(o, -uTime * .004)).r) - .5;
+          uv += warp * .4;
+          float n = texture(uNoise, uv).r * .55
+                  + texture(uNoise, uv * vec2(2.3, 1.7) + vec2(-uTime * 1.2 / D, uTime * .003)).r * .3
+                  + texture(uNoise, uv * vec2(5.1, 3.9) + vec2(uTime * 2. / D, -uTime * .005)).r * .15
+                  + texture(uNoise, uv * vec2(11.3, 8.7) + vec2(-uTime * 3. / D, uTime * .008)).r * .1;
+          n /= 1.1;
+          float layer = smoothstep(.34, .64, n) * .4 * inFront;
+          shade += (1. - acc) * layer * n;
+          acc += (1. - acc) * layer;
+        }
+        return vec2(acc * fade, acc > 0. ? shade / acc : .5);
+      }
+
+      // Mist is lit like the haze at the horizon behind it: warm near the light, blue elsewhere
+      vec3 mistColor(vec3 d, float bright) {
+        return sky(normalize(vec3(d.x, .03, d.z))) * 1.4 * (.55 + .85 * bright);
+      }
+
+      float sdBox(vec2 p, vec2 b) {
+        vec2 d = abs(p) - b;
+        return length(max(d, 0.)) + min(max(d.x, d.y), 0.);
+      }
+
+      // Colour of the frame nearest to q (relative to the portal centre). Colours are laid out by
+      // distance round the frame, so they flow smoothly along it, even while it's still a line.
+      // They drift slowly round, with a soft brighter band chasing them.
+      const vec3 HUES[4] = vec3[](
+        vec3(.25, .35, 1.), vec3(.62, .32, 1.), vec3(1., .3, .72), vec3(1., .58, .3));
+      vec3 portalHue(vec2 q) {
+        vec2 b = uPortal.xy;
+        vec2 c = clamp(q, -b, b);
+        vec4 d = vec4(c.y + b.y, b.x - c.x, b.y - c.y, c.x + b.x);  // to bottom, right, top, left
+        float near = min(min(d.x, d.y), min(d.z, d.w));
+        float along = near == d.x ? c.x + b.x
+                    : near == d.y ? 2. * b.x + b.y + c.y
+                    : near == d.z ? 3. * b.x + 2. * b.y - c.x
+                    : 4. * b.x + 3. * b.y - c.y;
+        float u = along / (4. * (b.x + b.y) + 1e-3) + uTime * .025;
+        float f = fract(u) * 4.;
+        int i = int(f);
+        vec3 hue = mix(HUES[i], HUES[(i + 1) % 4], smoothstep(0., 1., fract(f)));
+        return hue * (.85 + .3 * sin(u * 12.566 - uTime * .9));
+      }
+
+      // Light from the frame seen at q on the portal's plane: a tight glow hugging the frame
+      // plus a wide soft falloff. spread (m) softens it further, for rough reflections.
+      vec3 portalGlow(vec2 q, float spread) {
+        float e = abs(sdBox(q, uPortal.xy));
+        float g = .9 * exp(-e / (1.2 + spread)) + .45 * exp(-e / (5. + spread)) + .12 * exp(-e / 16.);
+        return portalHue(q) * g * uPortal.z;
+      }
+
+      // A point in the portal's own 2D coordinates (metres from its centre)
+      vec2 portalLocal(vec3 p) { p -= uPortalPos; return vec2(dot(p, uRight), dot(p, uUp)); }
+
+      // Distance along a ray from o to the portal's plane (huge if the ray never reaches it)
+      float portalT(vec3 o, vec3 d) {
+        float facing = dot(d, uFwd);
+        return facing > 1e-4 ? dot(uPortalPos - o, uFwd) / facing : 1e9;
+      }
+
+      // The portal's light scattering in the air along a camera ray, up to the surface at
+      // maxDist. Thicker mist (fog) catches more of it. Behind the glass it's kept faint so
+      // the view through stays clear.
+      vec3 portalHalo(vec3 d, float maxDist, float fog) {
+        if (uPortal.z <= 0.) return vec3(0.);
+        float t = portalT(uCam, d);
+        if (t > 1e8) return vec3(0.);
+        float vis = clamp((maxDist - t * .7) / (t * .6), 0., 1.);
+        vec2 q = portalLocal(uCam + d * t);
+        float behindGlass = mix(.35, 1., smoothstep(-1.5, 0., sdBox(q, uPortal.xy)));
+        return portalGlow(q, 0.) * vis * behindGlass * (.4 + 2.2 * fog);
+      }
+
+      float hash(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * .1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      vec3 tone(vec3 c) {
+        vec2 uv = gl_FragCoord.xy / uRes;
+        c *= 1. - .45 * dot(uv - .5, uv - .5);  // vignette
+        return 1. - exp(-c * 1.15);              // soft highlight roll-off
+      }
+
+      // Film grain over everything, re-rolled ~24 times a second (uTime runs at 0.7×)
+      float grain() {
+        return (hash(gl_FragCoord.xy + fract(floor(uTime * 34.) * .1234) * 517.) - .5) * .045;
+      }
+    `;
+
+    const quadVert = `#version 300 es
+      in vec2 aPos;
+      out vec2 vNdc;
+      void main() { vNdc = aPos; gl_Position = vec4(aPos, 0., 1.); }`;
+
+    const skyFrag = common + post + `
+      in vec2 vNdc;
+      out vec4 outColor;
+      void main() {
+        vec3 d = normalize(uFwd + vNdc.x * uTan.x * uRight + vNdc.y * uTan.y * uUp);
+        vec2 m = mist(d, 1e9);
+        vec3 c = mix(sky(d), mistColor(d, m.y), m.x) + portalHalo(d, 1e9, m.x);
+        outColor = vec4(tone(c), 1.);
+      }`;
+
+    const oceanVert = common + `
+      in vec2 aPos;  // undisplaced grid position (x, z)
+      out vec2 vGrid;
+      out vec3 vWorld;
+      void main() {
+        vec3 p = vec3(aPos.x, 0., aPos.y);
+        float dist = length(aPos - uCam.xz);
+        for (int i = 0; i < NW; i++) {
+          vec3 w = WAVES[i];
+          vec2 D = waveDir(w.x);
+          float k = waveK(w.y);
+          float ph = wavePhase(D, k, aPos);
+          // Grid rows spread out with distance; drop waves the mesh can no longer resolve
+          float f = 1. - smoothstep(w.y * 5., w.y * 9., dist);
+          p.xz += D * (STEEP / k * cos(ph) * f);
+          p.y += w.z * sin(ph) * f;
+        }
+        vGrid = aPos;
+        vWorld = p;
+        vec3 r = p - uCam;
+        float vz = dot(r, uFwd);
+        const float N = ${NEAR.toFixed(2)}, F = ${FAR.toFixed(1)};
+        gl_Position = vec4(dot(r, uRight) / uTan.x, dot(r, uUp) / uTan.y,
+                           vz * (F + N) / (F - N) - 2. * F * N / (F - N), vz);
+      }`;
+
+    const oceanFrag = common + post + `
+      in vec2 vGrid;
+      in vec3 vWorld;
+      out vec4 outColor;
+      void main() {
+        // How much water one pixel covers, worked out per pixel from distance and viewing angle
+        // (screen-space derivatives only change every 2×2 pixels, which shows up as blocks).
+        // Waves smaller than that are averaged away and their slope turns into roughness
+        // instead, so reflections blur smoothly rather than breaking up into pixels.
+        vec3 v = normalize(vWorld - uCam);
+        float dist = length(vWorld - uCam);
+        float fp = dist * 2. * uTan.y / uRes.y / max(-v.y, .02);
+        float rough = .0006;
+
+        // Exact Gerstner surface tangents
+        vec3 tx = vec3(1., 0., 0.), tz = vec3(0., 0., 1.);
+        for (int i = 0; i < NW; i++) {
+          vec3 w = WAVES[i];
+          vec2 D = waveDir(w.x);
+          float k = waveK(w.y);
+          float ph = wavePhase(D, k, vGrid);
+          float f = 1. - smoothstep(.12 * w.y, .4 * w.y, fp);
+          float s = sin(ph) * STEEP * f, c = cos(ph) * w.z * k * f;
+          tx += vec3(-D.x * D.x * s, D.x * c, -D.x * D.y * s);
+          tz += vec3(-D.x * D.y * s, D.y * c, -D.y * D.y * s);
+          rough += (1. - f) * (w.z * k) * (w.z * k) * .5;
+        }
+        vec3 n = normalize(cross(tz, tx));
+
+        // Small ripples, normals only
+        vec2 grad = vec2(0.);
+        float len = 3.4;
+        for (int i = 0; i < 10; i++) {
+          vec2 D = waveDir(.7 + float(i) * 2.39996);
+          float k = waveK(len);
+          float a = len * .007;
+          float f = 1. - smoothstep(.12 * len, .4 * len, fp);
+          grad += D * (a * k * cos(wavePhase(D, k, vGrid)) * f);
+          rough += (1. - f) * (a * k) * (a * k) * .5;
+          len *= .74;
+        }
+        n = normalize(n - vec3(grad.x, 0., grad.y));
+
+        vec3 r = reflect(v, n);
+        r.y = abs(r.y);
+        float cosV = max(dot(n, -v), 0.);
+        float fres = .02 + .98 * pow(1. - cosV, 5.);
+
+        vec3 deep = vec3(.016, .02, .025);
+        vec3 col = mix(deep, sky(r), fres);
+
+        // Sun glints (Beckmann lobe, widened by the ripples we averaged away)
+        vec3 h = normalize(uSun - v);
+        float nh = max(dot(n, h), 1e-3);
+        float t2 = (1. - nh * nh) / (nh * nh);
+        float spec = exp(-t2 / rough) / (3.1416 * rough * nh * nh * nh * nh);
+        col += vec3(1., .86, .76) * spec * fres * .03;
+
+        if (uPortal.z > 0.) {
+          // The portal mirrored in the waves, smeared into streaks by the ripples: the frame's
+          // bright core, its wider soft glow, and the glowing glass inside it
+          float tr = portalT(vWorld, r);
+          if (tr < 1e8 && dot(vWorld - uPortalPos, uFwd) < 0.) {
+            vec2 q = portalLocal(vWorld + r * tr);
+            float sd = sdBox(q, uPortal.xy), e = abs(sd), spread = tr * sqrt(rough);
+            float g = exp(-e / (.5 + spread)) + .35 * exp(-e / (4. + spread))
+                    + .25 * smoothstep(spread + .5, -spread - .5, sd);
+            col += portalHue(q) * uPortal.z * g * (.6 + 2.5 * fres);
+          }
+          // Light falling on the water from the nearest part of the portal
+          vec2 lq = clamp(portalLocal(vWorld), -uPortal.xy, uPortal.xy);
+          vec3 L = uPortalPos + uRight * lq.x + uUp * lq.y - vWorld;
+          float ld = length(L);
+          col += portalHue(lq) * uPortal.z
+               * (.09 + .45 * max(dot(n, L / ld), 0.)) * 80. / (80. + ld * ld);
+        }
+
+        // Distance haze blends the sea into the sky at the horizon
+        float fog = 1. - .9 * exp(-dist * .0018);
+        col = mix(col, sky(v), fog);
+        vec2 m = mist(v, dist);
+        col = mix(col, mistColor(v, m.y), m.x) + portalHalo(v, dist, m.x);
+
+        // Alpha marks water behind the portal's plane, which the portal is drawn over
+        float behind = uPortal.z > 0. ? smoothstep(-.4, .4, dist - portalT(uCam, v)) : 1.;
+        outColor = vec4(tone(col), behind);
+      }`;
+
+    // Separable Gaussian blur for the portal's frosted glass
+    const blurFrag = `#version 300 es
+      precision highp float;
+      uniform sampler2D uSrc;
+      uniform vec2 uStep;  // uv offset between taps
+      in vec2 vNdc;
+      out vec4 outColor;
+      void main() {
+        vec2 uv = vNdc * .5 + .5;
+        vec3 s = vec3(0.);
+        float tw = 0.;
+        for (int i = -6; i <= 6; i++) {
+          float w = exp(-float(i * i) / 18.);
+          s += texture(uSrc, uv + uStep * float(i)).rgb * w;
+          tw += w;
+        }
+        outColor = vec4(s / tw, 1.);
+      }`;
+
+    // Puts the scene on screen with the portal (frame and glass) drawn over it
+    const finalFrag = common + post + `
+      uniform sampler2D uScene, uBlur;
+      in vec2 vNdc;
+      out vec4 outColor;
+      void main() {
+        vec2 uv = gl_FragCoord.xy / uRes;
+        vec4 scene = texture(uScene, uv);
+        vec3 c = scene.rgb;
+        if (uPortal.z > 0.) {
+          vec3 d = normalize(uFwd + vNdc.x * uTan.x * uRight + vNdc.y * uTan.y * uUp);
+          float t = portalT(uCam, d);
+          vec2 q = portalLocal(uCam + d * t);
+          float px = t * 2. * uTan.y / uRes.y;  // metres per pixel at the portal
+          float lw = max(.035, px * .7);        // half-width of the frame's line
+          float s = sdBox(q, uPortal.xy);
+          // Most of the screen is nowhere near the portal: leave those pixels alone
+          if (s < lw * 40.) {
+            float vis = scene.a;                // 0 where nearer waves hide the portal
+            float inside = smoothstep(px, -px, s) * vis;
+            vec3 emit = vec3(0.);
+            if (inside > 0.) {
+              // Frosted glass: the scene behind it, blurred, with a soft violet glow added on top
+              vec3 glass = texture(uBlur, uv).rgb * vec3(.9, .86, 1.) + vec3(.045, .016, .095);
+              c = mix(c, glass, inside * min(uPortal.z, 1.));
+              // Colour bleeding in from each side of the frame (summed, so corners stay smooth)
+              vec2 b = uPortal.xy;
+              vec4 sides = max(vec4(b + q, b - q), 0.);  // distance in from left, bottom, right, top
+              float m = min(b.x, b.y) + .01;
+              vec4 bleed = .4 * exp(-sides / (.06 * m)) + .16 * exp(-sides / (.4 * m));
+              emit = portalHue(vec2(-b.x, q.y)) * bleed.x + portalHue(vec2(q.x, -b.y)) * bleed.y
+                   + portalHue(vec2(b.x, q.y)) * bleed.z + portalHue(vec2(q.x, b.y)) * bleed.w;
+              emit *= inside / max(1., dot(bleed, vec4(.5)));
+            }
+            // The frame itself: a white-hot line with a coloured fringe
+            vec3 hue = portalHue(q);
+            emit += (hue * 2. + .5) * exp(-s * s / (lw * lw)) * vis;
+            emit += hue * .6 * exp(-abs(s) / (lw * 5.)) * vis;
+            c = 1. - (1. - c) * exp(-emit * uPortal.z * 1.15);
+          }
+        }
+        outColor = vec4(c + grain(), 1.);
+      }`;
+
+    function compile(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    function program(vs, fs) {
+      const p = gl.createProgram();
+      gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+      gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+      gl.bindAttribLocation(p, 0, 'aPos');  // every program reads its vertices from slot 0
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      return p;
+    }
+    const skyProg = program(quadVert, skyFrag);
+    const oceanProg = program(oceanVert, oceanFrag);
+    const blurProg = program(quadVert, blurFrag);
+    const finalProg = program(quadVert, finalFrag);
+
+    // Texture units: 0 mist noise, 1 scene, 2 blurred scene, 3 blur input
+    gl.useProgram(blurProg);
+    gl.uniform1i(gl.getUniformLocation(blurProg, 'uSrc'), 3);
+    gl.useProgram(finalProg);
+    gl.uniform1i(gl.getUniformLocation(finalProg, 'uScene'), 1);
+    gl.uniform1i(gl.getUniformLocation(finalProg, 'uBlur'), 2);
+    const uStep = gl.getUniformLocation(blurProg, 'uStep');
+
+    // One triangle covering the screen, for the sky and the full-screen passes
+    const quadVao = gl.createVertexArray();
+    gl.bindVertexArray(quadVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    // Ocean: a fan-shaped grid in front of the camera. Rows are spaced exponentially so the mesh
+    // is dense up close and sparse far away, keeping triangles roughly the same size on screen.
+    // Rows go near → far so the depth test rejects hidden water early.
+    const verts = new Float32Array(GRID_ROWS * GRID_COLS * 2);
+    for (let j = 0, o = 0; j < GRID_ROWS; j++) {
+      const d = GRID_NEAR * Math.pow(GRID_FAR / GRID_NEAR, j / (GRID_ROWS - 1));
+      const halfW = d * 1.6 + 10;
+      for (let i = 0; i < GRID_COLS; i++) {
+        verts[o++] = (i / (GRID_COLS - 1) * 2 - 1) * halfW;
+        verts[o++] = -d;
+      }
+    }
+    const idx = new Uint32Array((GRID_ROWS - 1) * (GRID_COLS - 1) * 6);
+    for (let j = 0, o = 0; j < GRID_ROWS - 1; j++) {
+      for (let i = 0; i < GRID_COLS - 1; i++) {
+        const a = j * GRID_COLS + i, b = a + 1, c = a + GRID_COLS, d = c + 1;
+        idx[o++] = a; idx[o++] = c; idx[o++] = b;
+        idx[o++] = b; idx[o++] = c; idx[o++] = d;
+      }
+    }
+    const oceanVao = gl.createVertexArray();
+    gl.bindVertexArray(oceanVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+
+    // Tileable cloudy noise for the mist, built once so the shader only does texture lookups
+    const NOISE = 256;
+    const noise = new Float32Array(NOISE * NOISE);
+    for (let period = 4, amp = 0.5; period <= 64; period *= 2, amp *= 0.5) {
+      const grid = Float32Array.from({ length: period * period }, Math.random);
+      const at = (x, y) => grid[(y % period) * period + (x % period)];
+      const cell = NOISE / period;
+      for (let y = 0; y < NOISE; y++) {
+        for (let x = 0; x < NOISE; x++) {
+          const gx = x / cell, gy = y / cell, ix = Math.floor(gx), iy = Math.floor(gy);
+          let fx = gx - ix, fy = gy - iy;
+          fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+          const top = at(ix, iy) + (at(ix + 1, iy) - at(ix, iy)) * fx;
+          const bot = at(ix, iy + 1) + (at(ix + 1, iy + 1) - at(ix, iy + 1)) * fx;
+          noise[y * NOISE + x] += (top + (bot - top) * fy) * amp;
+        }
+      }
+    }
+    let lo = Infinity, hi = -Infinity;
+    for (const v of noise) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const noiseTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, NOISE, NOISE, 0, gl.RED, gl.UNSIGNED_BYTE,
+      Uint8Array.from(noise, v => (v - lo) / (hi - lo) * 255));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+    // Offscreen render targets
+    function target(w, h, withDepth) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      let rb = null;
+      if (withDepth) {
+        rb = gl.createRenderbuffer();
+        gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+        gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return { fb, tex, rb, w, h };
+    }
+    function release(t) {
+      if (!t) return;
+      gl.deleteFramebuffer(t.fb);
+      gl.deleteTexture(t.tex);
+      if (t.rb) gl.deleteRenderbuffer(t.rb);
+    }
+    let sceneT, blurA, blurB;  // the scene, and two quarter-size buffers for the blur
+
+    const uniforms = p => Object.fromEntries(
+      ['uCam', 'uRight', 'uUp', 'uFwd', 'uSun', 'uTan', 'uRes', 'uTime', 'uPortal', 'uPortalPos']
+        .map(n => [n, gl.getUniformLocation(p, n)]));
+    const skyU = uniforms(skyProg), oceanU = uniforms(oceanProg), finalU = uniforms(finalProg);
+
+    const fwd = [0, Math.sin(PITCH), -Math.cos(PITCH)];
+    const up = [0, Math.cos(PITCH), Math.sin(PITCH)];
+    let tanX = 1, tanY = 1, sun = [1, 0, 0];
+
+    // Pixel densities for [screen, scene]. The screen is drawn sharp so the portal's frame and the
+    // grain stay crisp; the sky, fog and sea are soft, so they render at a lower density and are
+    // scaled up. If frames run slow we step down this ladder.
+    const dpr = window.devicePixelRatio || 1;
+    const QUALITY = [[2, 1.25], [1.5, 1], [1.25, 0.8], [1, 0.65]]
+      .map(([a, b]) => [Math.min(a, dpr), Math.min(b, dpr)]);
+    let quality = 0, scale, sceneScale;
+    const card = document.querySelector('.card');
+    function resize() {
+      [scale, sceneScale] = QUALITY[quality];
+      canvas.width = Math.round(innerWidth * scale);
+      canvas.height = Math.round(innerHeight * scale);
+      [sceneT, blurA, blurB].forEach(release);
+      const sw = Math.round(innerWidth * sceneScale), sh = Math.round(innerHeight * sceneScale);
+      const qw = Math.max(1, sw >> 2), qh = Math.max(1, sh >> 2);
+      sceneT = target(sw, sh, true);
+      blurA = target(qw, qh, false);
+      blurB = target(qw, qh, false);
+      const aspect = innerWidth / innerHeight;
+      // Portrait screens get a taller field of view so they still show plenty of sky and sea
+      tanY = Math.tan(20 * Math.PI / 180) * Math.sqrt(Math.max(1, 1 / aspect));
+      tanX = tanY * aspect;
+      // The portal faces the camera dead centre, so on screen it's a centred rectangle
+      card.style.setProperty('--pw', PORTAL_HW / (PORTAL_DIST * tanX) * innerWidth + 'px');
+      card.style.setProperty('--ph', PORTAL_HH / (PORTAL_DIST * tanY) * innerHeight + 'px');
+      // The light source sits right at the edge of the frame, mostly cropped off
+      const az = Math.max(Math.atan(tanX) * 0.97, 0.55), el = 0.02;
+      sun = [Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)];
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    // Portal: a glowing point behind the button stretches into a line, then rises into a box
+    const portal = { hw: 0, hh: 0, glow: 0 };
+    let openedAt = null;
+    const enter = document.querySelector('.enter');
+    enter.addEventListener('click', () => {
+      if (openedAt === null) {
+        openedAt = performance.now();
+        setTimeout(() => card.classList.add('show'), (LINE_S + RISE_S) * 1000);
+      }
+      enter.classList.add('gone');
+      enter.blur();
+    });
+    const clamp01 = x => Math.min(Math.max(x, 0), 1);
+    const easeInOut = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+    function setUniforms(u, t, w, h) {
+      gl.uniform3f(u.uCam, 0, CAM_HEIGHT, 0);
+      gl.uniform3f(u.uRight, 1, 0, 0);
+      gl.uniform3fv(u.uUp, up);
+      gl.uniform3fv(u.uFwd, fwd);
+      gl.uniform3fv(u.uSun, sun);
+      gl.uniform2f(u.uTan, tanX, tanY);
+      gl.uniform2f(u.uRes, w, h);
+      gl.uniform1f(u.uTime, t);
+      gl.uniform4f(u.uPortal, portal.hw, portal.hh, portal.glow, 0);
+      gl.uniform3fv(u.uPortalPos, PORTAL_POS);
+    }
+
+    let last = 0, slow = 0, frames = 0;
+    function frame(ms) {
+      requestAnimationFrame(frame);
+      // Cap at ~60fps: the swell is slow, so higher refresh rates only cost GPU time
+      const dt = ms - last;
+      if (dt < 12) return;
+      last = ms;
+      if (dt < 250) {  // ignore gaps from background tabs
+        frames++;
+        if (dt > 24) slow++;
+        if (frames >= 45) {
+          if (slow > frames / 3 && quality < QUALITY.length - 1) { quality++; resize(); }
+          frames = slow = 0;
+        }
+      }
+      const t = ms / 1000 * 0.7;  // slowed slightly for a calmer sea
+
+      if (openedAt !== null) {
+        const s = (ms - openedAt) / 1000;
+        portal.hw = PORTAL_HW * easeInOut(clamp01(s / LINE_S));
+        portal.hh = PORTAL_HH * easeInOut(clamp01((s - LINE_S) / RISE_S));
+        portal.glow = clamp01(s / 0.15) * (1 + 0.06 * Math.sin(ms / 700));  // gentle breathing
+      }
+
+      // 1. Sky and sea, into an offscreen image
+      gl.bindFramebuffer(gl.FRAMEBUFFER, sceneT.fb);
+      gl.viewport(0, 0, sceneT.w, sceneT.h);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+
+      gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(skyProg);
+      setUniforms(skyU, t, sceneT.w, sceneT.h);
+      gl.bindVertexArray(quadVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+      gl.useProgram(oceanProg);
+      setUniforms(oceanU, t, sceneT.w, sceneT.h);
+      gl.bindVertexArray(oceanVao);
+      gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0);
+      gl.disable(gl.DEPTH_TEST);
+
+      // 2. A blurred copy for the portal's glass, only while it's there
+      gl.bindVertexArray(quadVao);
+      if (portal.glow > 0) {
+        gl.useProgram(blurProg);
+        gl.activeTexture(gl.TEXTURE3);
+        gl.viewport(0, 0, blurA.w, blurA.h);
+        gl.bindTexture(gl.TEXTURE_2D, sceneT.tex);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, blurA.fb);
+        gl.uniform2f(uStep, 1.25 / blurA.w, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindTexture(gl.TEXTURE_2D, blurA.tex);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, blurB.fb);
+        gl.uniform2f(uStep, 0, 1.25 / blurA.h);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+
+      // 3. Onto the screen, with the portal drawn over the scene
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, sceneT.tex);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, blurB.tex);
+      gl.useProgram(finalProg);
+      setUniforms(finalU, t, canvas.width, canvas.height);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
