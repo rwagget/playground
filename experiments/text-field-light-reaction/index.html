@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Text Field Light Reaction · Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: #e6e6e6;
+      background: radial-gradient(ellipse at 50% 45%, #030c17 0%, #020911 55%, #01060b 100%);
+    }
+
+    /* Glow layer sits between the page background and the card; screen blend means black = no light */
+    #glow {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
+    .card {
+      --g: 0;              /* outer-glow stage 0..1, driven from JS */
+      --rim: linear-gradient(#121314, #121314);  /* border paint, a conic gradient that follows the hotspots */
+      position: relative;
+      z-index: 1;
+      width: min(525px, 100%);
+      padding: 56px 54px 54px;
+      border: 1px solid transparent;
+      border-radius: 20px;
+      /* Card fill, then a border lit unevenly by the same hotspots as the glow */
+      background:
+        linear-gradient(#0a0a0b, #0a0a0b) padding-box,
+        var(--rim) border-box;
+      /* Faint warm bleed inside the edges */
+      box-shadow: inset 0 0 36px rgb(255 140 60 / calc(var(--g) * 0.09));
+    }
+
+    h1 {
+      margin: 0 0 30px;
+      text-align: center;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #e8e8e8;
+    }
+
+    .field + .field { margin-top: 26px; }
+
+    label {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 16px;
+      color: #d2d2d2;
+    }
+
+    input {
+      display: block;
+      width: 100%;
+      height: 38px;
+      padding: 0 10px;
+      font: inherit;
+      font-size: 16px;
+      color: #e6e6e6;
+      background: #000;
+      border: 1px solid #111214;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input::placeholder { color: #666; }
+    input:focus {
+      border-color: #3a3b3e;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+    }
+
+    button {
+      display: block;
+      width: 100%;
+      height: 45px;
+      margin-top: 30px;
+      font: inherit;
+      font-size: 17px;
+      font-weight: 500;
+      color: #111;
+      background: linear-gradient(to bottom, #e8e8e8, #a9a9a9);
+      border: 0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.05s;
+    }
+    button:hover { filter: brightness(1.06); }
+    button:active { transform: translateY(1px); filter: brightness(0.95); }
+    button:focus-visible { outline: 2px solid #8a8a8a; outline-offset: 3px; }
+
+    @media (max-width: 480px) {
+      .card { padding: 40px 24px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="glow"></canvas>
+
+  <form class="card" id="signup" autocomplete="off" novalidate>
+    <h1>Create Your Account</h1>
+
+    <div class="field">
+      <label for="name">Full Name</label>
+      <input id="name" type="text" placeholder="John Doe" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
+    </div>
+
+    <div class="field">
+      <label for="email">Email Address</label>
+      <input id="email" type="email" placeholder="john@email.com" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
+    </div>
+
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
+    </div>
+
+    <button type="submit">Sign Up</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('signup');
+    const button = form.querySelector('button');
+
+    // ---- Normal form behaviour ----
+
+    // No backend: accept the submission locally, confirm, then reset
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      button.textContent = 'Account created';
+      button.disabled = true;
+      setTimeout(() => {
+        form.reset();
+        button.textContent = 'Sign Up';
+        button.disabled = false;
+      }, 1800);
+    });
+
+    // ---- Typing energy ----
+    // Each keystroke adds heat; heat leaks away continuously. Typing faster than it leaks
+    // builds it up, so a quick burst climbs fast and high while a single key is a small bump.
+    const KICK = 0.16;       // heat per keystroke
+    const LEAK = 0.8;        // seconds for heat to fall to ~37%
+    const MAX_HEAT = 2.5;
+    const CURVE = 1.2;       // >1 keeps isolated keystrokes faint without capping sustained typing
+    const ATTACK = 5;        // how quickly the visible glow chases rising heat (1/s)
+    const RELEASE = 5;       // ...and falling heat (1/s)
+
+    let heat = 0;            // raw accumulated typing heat
+    let glow = 0;            // smoothed, saturated 0..1 value that drives the visuals
+
+    form.addEventListener('input', e => {
+      if (e.target.tagName !== 'INPUT') return;
+      heat = Math.min(MAX_HEAT, heat + KICK);
+      wake();
+    });
+
+    // ---- Hotspots ----
+    // A handful of bright sections slide along the card's edge, each swelling and fading on
+    // its own rhythm. Angles are screen-space (y down, 0 = right). The shader and the border
+    // both read these, so the rim and the glow brighten in the same places.
+    const SPOTS = [
+      { base: 0.4, drift:  0.34, wob: 0.7, wobF: 0.27, pulseF: 1.10, phase: 0.0, k: 4.0 },
+      { base: 2.2, drift: -0.27, wob: 0.5, wobF: 0.19, pulseF: 0.83, phase: 1.9, k: 6.0 },
+      { base: 3.8, drift:  0.21, wob: 0.9, wobF: 0.15, pulseF: 1.37, phase: 3.6, k: 5.0 },
+      { base: 5.2, drift: -0.41, wob: 0.6, wobF: 0.23, pulseF: 0.97, phase: 5.1, k: 8.0 },
+    ];
+    const SPOT_FLOOR = 0.1;  // light left between hotspots, so the edge never goes fully dark
+    const spotData = new Float32Array(SPOTS.length * 3);
+
+    function updateSpots(t) {
+      SPOTS.forEach((s, i) => {
+        const centre = s.base + s.drift * t + s.wob * Math.sin(t * s.wobF + s.phase);
+        // Two incommensurate sines so each spot's swelling never falls into an obvious loop
+        const pulse = 0.5 + 0.3 * Math.sin(t * s.pulseF + s.phase) + 0.2 * Math.sin(t * s.pulseF * 1.73 + s.phase * 2.3);
+        spotData[i * 3] = centre;
+        spotData[i * 3 + 1] = 0.15 + 0.85 * pulse * pulse;
+        spotData[i * 3 + 2] = s.k;
+      });
+    }
+
+    function spotLight(a) {
+      let f = SPOT_FLOOR;
+      for (let i = 0; i < SPOTS.length; i++) {
+        f += spotData[i * 3 + 1] * Math.exp(spotData[i * 3 + 2] * (Math.cos(a - spotData[i * 3]) - 1));
+      }
+      return f;
+    }
+
+    // ---- Border + inner bleed (CSS) ----
+    const BASE = [0x12, 0x13, 0x14];
+    const RIM_LO = [150, 82, 44];
+    const RIM_HI = [255, 200, 135];
+    const BORDER_STOPS = 36;
+    const mix3 = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    const rgb = c => `rgb(${c.map(Math.round).join(' ')})`;
+
+    // Two stages: the border answers first and fast (it is visibly warm after one key),
+    // while the outer glow stays off until the energy passes GLOW_START, then eases in
+    const GLOW_START = 0.2;
+    const GLOW_FULL = 0.9;
+    const borderLevel = e => 1 - Math.exp(-3.5 * e);
+    function glowLevel(e) {
+      const x = Math.min(1, Math.max(0, (e - GLOW_START) / (GLOW_FULL - GLOW_START)));
+      return x * x * (3 - 2 * x);
+    }
+
+    function paintCard(e) {
+      form.style.setProperty('--g', glowLevel(e).toFixed(3));
+      if (e <= 0) { form.style.removeProperty('--rim'); return; }
+      const stops = [];
+      for (let i = 0; i <= BORDER_STOPS; i++) {
+        const a = (i / BORDER_STOPS) * Math.PI * 2;
+        const lit = Math.min(1, borderLevel(e) * (0.3 + 0.85 * spotLight(a)));
+        // Dim sections warm to copper, bright ones push on to pale gold
+        const col = lit < 0.5 ? mix3(BASE, RIM_LO, lit * 2) : mix3(RIM_LO, RIM_HI, lit * 2 - 1);
+        stops.push(rgb(col));
+      }
+      // conic 0deg is "up"; starting from 90deg lines it up with angle 0 = right, clockwise
+      form.style.setProperty('--rim', `conic-gradient(from 90deg, ${stops.join(', ')})`);
+    }
+
+    // ---- Glow (WebGL) ----
+    const canvas = document.getElementById('glow');
+    const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
+
+    const vert = `#version 300 es
+      in vec2 pos;
+      void main() { gl_Position = vec4(pos, 0., 1.); }`;
+
+    const frag = `#version 300 es
+      precision highp float;
+      uniform vec2 uRes;
+      uniform float uScale;   // canvas px per CSS px
+      uniform vec4 uCard;     // centre xy, half size xy (CSS px, y down)
+      uniform float uRadius;
+      uniform float uE;       // glow energy 0..1
+      uniform float uT;
+      uniform vec3 uSpots[4]; // hotspot centre angle, strength, tightness
+      out vec4 outColor;
+
+      float hash(vec3 p) {
+        p = fract(p * .3183099 + .1);
+        p *= 17.;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      void main() {
+        vec2 p = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale;
+        vec2 c = uCard.xy, b = uCard.zw;
+        float E = uE;
+
+        // Distance to the card's rounded rectangle; the card covers everything inside it
+        vec2 q = abs(p - c) - b + uRadius;
+        float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - uRadius;
+        if (d < 0.) { outColor = vec4(0., 0., 0., 1.); return; }
+
+        // Direction around the card, aspect-neutral
+        vec2 dir = normalize((p - c) / b + 1e-5);
+        float a = atan(dir.y, dir.x);
+
+        // How lit this part of the edge is right now: a floor plus the moving hotspots
+        float f = ${SPOT_FLOOR.toFixed(3)};
+        for (int i = 0; i < 4; i++) {
+          vec3 s = uSpots[i];
+          f += s.y * exp(s.z * (cos(a - s.x) - 1.));
+        }
+
+        // Thin hot rim hugging the edge, never fully dark
+        float rim = exp(-d / (2.5 + 3. * E)) * (.25 + f);
+
+        // Halo: bright sections are stronger and also reach further out than dim ones
+        float reach = (8. + 34. * E) * (.35 + .9 * f);
+        float halo = exp(-d / reach) * f;
+
+        float I = E * (1.3 * rim + .8 * halo);
+
+        // Filmic warm ramp: faint light is deep copper, strong light saturates toward pale gold
+        vec3 col = 1. - exp(-I * vec3(2.1, .78, .27));
+
+        // Faint cool haze far out, like the blue fringe around the reference eclipse
+        float haze = exp(-d / (160. + 260. * E)) * E;
+        col += vec3(.015, .03, .04) * haze;
+
+        // Dither to keep the dark falloff from banding
+        col += (hash(vec3(gl_FragCoord.xy, fract(uT) * 91.)) - .5) / 255.;
+        outColor = vec4(max(col, 0.), 1.);
+      }`;
+
+    let program, uni;
+    function initGL() {
+      if (!gl) return false;
+      const compile = (type, src) => {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        return s;
+      };
+      program = gl.createProgram();
+      gl.attachShader(program, compile(gl.VERTEX_SHADER, vert));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, frag));
+      gl.linkProgram(program);
+      gl.useProgram(program);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(program, 'pos');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      uni = {};
+      for (const n of ['uRes', 'uScale', 'uCard', 'uRadius', 'uE', 'uT', 'uSpots']) uni[n] = gl.getUniformLocation(program, n);
+      return true;
+    }
+    const hasGL = (() => { try { return initGL(); } catch (err) { console.warn(err); return false; } })();
+    if (!hasGL) canvas.remove();
+
+    // The glow is soft, so it renders below device resolution to keep the GPU cool
+    let scale = 1;
+    function resize() {
+      if (!hasGL) return;
+      scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * 0.6);
+      canvas.width = Math.round(innerWidth * scale);
+      canvas.height = Math.round(innerHeight * scale);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    addEventListener('resize', () => { resize(); if (running) return; clearGlow(); });
+    resize();
+
+    function clearGlow() {
+      if (!hasGL) return;
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    clearGlow();
+
+    function drawGlow(e, t) {
+      const r = form.getBoundingClientRect();
+      gl.uniform2f(uni.uRes, canvas.width, canvas.height);
+      gl.uniform1f(uni.uScale, scale);
+      gl.uniform4f(uni.uCard, r.left + r.width / 2, r.top + r.height / 2, r.width / 2, r.height / 2);
+      gl.uniform1f(uni.uRadius, parseFloat(getComputedStyle(form).borderTopLeftRadius) || 0);
+      gl.uniform1f(uni.uE, e);
+      gl.uniform1f(uni.uT, t);
+      gl.uniform3fv(uni.uSpots, spotData);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    // ---- Loop: only runs while there is glow to show ----
+    let running = false, last = 0;
+    const start = performance.now();
+
+    function wake() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      requestAnimationFrame(frame);
+    }
+
+    function frame(now) {
+      // Real elapsed time (exponential decay is stable at any step), so throttled frames don't stretch the fade
+      const dt = Math.max(0, (now - last) / 1000);
+      last = now;
+
+      heat *= Math.exp(-dt / LEAK);
+      const target = 1 - Math.exp(-1.4 * Math.pow(heat, CURVE));
+      const rate = target > glow ? ATTACK : RELEASE;
+      glow += (target - glow) * (1 - Math.exp(-rate * dt));
+
+      const t = (now - start) / 1000;
+      updateSpots(t);
+      paintCard(glow);
+      if (hasGL) {
+        const g = glowLevel(glow);
+        if (g > 0) drawGlow(g, t); else clearGlow();
+      }
+
+      if (heat < 0.002 && glow < 0.002) {
+        heat = glow = 0;
+        paintCard(0);
+        clearGlow();
+        running = false;
+        return;
+      }
+      requestAnimationFrame(frame);
+    }
+  </script>
+</body>
+</html>

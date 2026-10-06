@@ -16,5 +16,11 @@
     "title": "Ocean Landing Page",
     "description": "A misty, dark sea in real 3D — click to raise a glowing glass portal out of the water.",
     "date": "2026-10-04"
+  },
+  {
+    "slug": "text-field-light-reaction",
+    "title": "Text Field Light Reaction",
+    "description": "A sign-up form whose edges warm into a drifting, eclipse-like glow the faster you type.",
+    "date": "2026-10-04"
   }
 ]
