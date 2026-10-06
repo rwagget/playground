@@ -78,7 +78,13 @@
       color: #d2d2d2;
     }
 
+    /* Registered so the field border can fade between its resting and focused colours */
+    @property --edge-top { syntax: '<color>'; inherits: false; initial-value: transparent; }
+    @property --edge-bottom { syntax: '<color>'; inherits: false; initial-value: transparent; }
+
     input {
+      --edge-top: rgb(44 45 48 / 0);   /* top half: no visible border at rest */
+      --edge-bottom: #2c2d30;          /* fades in toward the bottom edge */
       display: block;
       width: 100%;
       height: 38px;
@@ -86,16 +92,19 @@
       font: inherit;
       font-size: 16px;
       color: #e6e6e6;
-      background: #000;
-      border: 1px solid #111214;
+      border: 1px solid transparent;
       border-radius: 6px;
+      background:
+        linear-gradient(#050506, #050506) padding-box,
+        linear-gradient(to bottom, var(--edge-top) 50%, var(--edge-bottom)) border-box;
       outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
+      transition: --edge-top 0.15s, --edge-bottom 0.15s;
     }
     input::placeholder { color: #666; }
+    /* Selected: the border closes all the way round */
     input:focus {
-      border-color: #3a3b3e;
-      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+      --edge-top: #36373b;
+      --edge-bottom: #36373b;
     }
 
     button {
