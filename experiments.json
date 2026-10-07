@@ -22,5 +22,11 @@
     "title": "Text Field Light Reaction",
     "description": "A sign-up form whose edges warm into a drifting, eclipse-like glow the faster you type.",
     "date": "2026-10-04"
+  },
+  {
+    "slug": "iphone-duo-dropdown",
+    "title": "iPhone Duo Dropdown",
+    "description": "A Settings dropdown whose menu flips over in 3D like a folding phone, coming into focus through a progressive blur.",
+    "date": "2026-10-06"
   }
 ]

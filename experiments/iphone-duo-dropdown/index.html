@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iPhone Duo Dropdown · Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      background: #f8f8f8;
+      overflow: hidden;  /* the flap's drawing area reaches past the page; never scroll for it */
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Holds the closed height so the header stays put while the menu unfolds below it */
+    .dropdown {
+      --radius: 9px;     /* header's bottom corners square off once the flap lifts */
+      --divider: #d5d5d5;
+      --turn: 0deg;
+      position: relative;
+      width: min(408px, 100%);
+      height: 74px;
+    }
+
+    .trigger {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      height: 74px;
+      padding: 0 28px;
+      background: #fff;
+      border: 1px solid #d5d5d5;
+      border-bottom-color: var(--divider);
+      border-radius: 9px 9px var(--radius) var(--radius);
+      font: inherit;
+      font-size: 22px;
+      font-weight: 500;
+      color: #000;
+      text-align: left;
+      cursor: pointer;
+    }
+    .trigger:focus-visible { outline: 2px solid #0a84ff; outline-offset: -4px; }
+
+    .chevron {
+      width: 17px;
+      height: 17px;
+      flex: none;
+      /* Flips over in step with the flap rather than spinning flat */
+      transform: perspective(60px) rotateX(var(--turn));
+    }
+
+    .menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      height: 74px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      background: #fff;
+      border: 1px solid #d5d5d5;
+      border-top: 0;
+      border-radius: 0 0 9px 9px;
+      visibility: hidden;
+    }
+    .option {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      padding: 0 27px;
+      font-size: 22px;
+      color: #707070;
+      cursor: pointer;
+    }
+
+    /* The flap in flight. Clipped to its outline in perspective: inside, whatever lies under
+       it in the flat layout shows through, blurring towards the free edge; where the outline
+       reaches past that content, it's a light grey. */
+    .flap, .rim {
+      position: absolute;
+      pointer-events: none;
+      overflow: visible;
+    }
+    .flap { background: #ececec; }  /* a shade darker than the page */
+    .rim[hidden] { display: none; }  /* SVG ignores the hidden attribute by default */
+    .flap > * { position: absolute; inset: 0; }
+    .flap .trigger, .flap .menu { position: absolute; visibility: visible; }
+    /* The card's border, carried round the flap's three outer edges (the hinge edge is the divider) */
+    .rim polyline { fill: none; stroke: #d5d5d5; stroke-width: 1; stroke-linejoin: round; }
+  </style>
+</head>
+<body>
+  <div class="dropdown" id="dropdown">
+    <button class="trigger" aria-expanded="false" aria-controls="menu">
+      Settings
+      <svg class="chevron" viewBox="0 0 17 17" fill="none" aria-hidden="true">
+        <path d="M1.5 5.25 8.5 12l7-6.75" stroke="#333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <ul class="menu" id="menu" role="menu">
+      <li class="option" role="menuitem" tabindex="-1">Camera</li>
+    </ul>
+    <div class="flap" id="flap" hidden></div>
+    <svg class="rim" id="rim" hidden><polyline/></svg>
+  </div>
+
+  <script>
+    const dropdown = document.getElementById('dropdown');
+    const trigger = dropdown.querySelector('.trigger');
+    const menu = document.getElementById('menu');
+    const flap = document.getElementById('flap');
+    const rim = document.getElementById('rim');
+    const rimLine = rim.querySelector('polyline');
+
+    const DURATION = 1200;
+    const LAYERS = 6;        // blur steps from the hinge to the free edge
+    const MAX_BLUR = 12;     // px, at the free edge while the flap stands upright
+    const DISTANCE = 340;    // px from the viewer to the page; smaller = stronger perspective
+    const EYE_RISE = 30;     // px the viewer sits above the hinge, so the flap never goes edge-on
+    const ROW = 74;          // header height = flap length = menu height
+    const PAD = 200;         // room around the dropdown for the flap to grow into
+    const SHADE = .3;        // dimming over the flap, darkest at its free edge; 1 = the earlier, heavier look
+
+    // Each blur level holds a copy of the header and of the menu at their flat positions
+    const levels = [];
+    for (let i = 0; i <= LAYERS; i++) {
+      const level = document.createElement('div');
+      for (const source of [trigger, menu]) {
+        const copy = source.cloneNode(true);
+        copy.removeAttribute('id');
+        copy.setAttribute('aria-hidden', 'true');
+        copy.inert = true;
+        level.append(copy);
+      }
+      flap.append(level);
+      levels.push({ el: level, copies: [...level.children], weight: (i / LAYERS) ** 1.4 });
+    }
+    const shade = document.createElement('div');
+    flap.append(shade);
+
+    // The flap's outline in its own plane: u across, d out from the hinge. Its free corners
+    // are rounded like the card's; its hinge corners match the header's bottom corners, so
+    // while it lies on the header nothing pokes out past them.
+    function outline(w, hingeR) {
+      const r = 9, pts = [];
+      const arc = (cu, cd, rad, from, to) => {
+        for (let k = 0; k <= 6; k++) {
+          const a = from + (to - from) * k / 6;
+          pts.push([cu + rad * Math.cos(a), cd + rad * Math.sin(a)]);
+        }
+      };
+      const q = Math.PI / 2;
+      arc(hingeR, hingeR, hingeR, -q, -2 * q);
+      arc(r, ROW - r, r, 2 * q, q);
+      arc(w - r, ROW - r, r, q, 0);
+      arc(w - hingeR, hingeR, hingeR, 0, -q);
+      return pts;
+    }
+
+    const clamp = x => Math.min(Math.max(x, 0), 1);
+    const ease = t => t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+
+    let progress = 0, target = 0, lastTime = null;
+
+    function render() {
+      const e = ease(progress);
+      const angle = Math.PI * (1 - e);  // π = lying face-down on the header, 0 = flat below it
+      const deg = angle * 180 / Math.PI;
+      const s = dropdown.style;
+      s.setProperty('--turn', 180 * e + 'deg');
+      const hingeR = 9 * (1 - clamp((180 - deg) / 25));
+      s.setProperty('--radius', hingeR + 'px');
+      // Outer border → faint divider as the flap lands
+      const v = Math.round(213 + 28 * clamp(1 - deg / 90));
+      s.setProperty('--divider', `rgb(${v},${v},${v})`);
+
+      const inFlight = progress > 0 && progress < 1;
+      menu.style.visibility = progress === 1 ? 'visible' : 'hidden';
+      flap.hidden = !inFlight;
+      rim.toggleAttribute('hidden', !inFlight);  // SVG has no .hidden property
+      if (!inFlight) return;
+
+      const w = dropdown.offsetWidth, hinge = ROW;
+      const size = { left: -PAD + 'px', top: -PAD + 'px', width: w + 2 * PAD + 'px', height: 2 * ROW + 2 * PAD + 'px' };
+      Object.assign(flap.style, size);
+      Object.assign(rim.style, size);
+
+      // Rotate about the hinge, then project towards a viewer centred above it
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const ex = w / 2, ey = hinge - EYE_RISE;
+      const project = (u, d) => {
+        const y = hinge + d * cos, z = d * sin, k = DISTANCE / (DISTANCE - z);
+        return [ex + (u - ex) * k + PAD, ey + (y - ey) * k + PAD];
+      };
+      const pts = outline(w, hingeR).map(([u, d]) => project(u, d));
+      flap.style.clipPath = `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})`;
+      rimLine.setAttribute('points', pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' '));
+
+      // Screen-space band from the hinge (sharp) to the free edge (blurriest)
+      const yh = hinge + PAD, yf = project(w / 2, ROW)[1];
+      const ramp = (from, to) => yf >= yh
+        ? `linear-gradient(${from[0]} ${from[1]}px, ${to[0]} ${to[1]}px)`
+        : `linear-gradient(${to[0]} ${to[1]}px, ${from[0]} ${from[1]}px)`;
+      const at = t => yh + (yf - yh) * t;
+
+      const blur = MAX_BLUR * sin ** .6;
+      levels.forEach(({ el, copies, weight }, i) => {
+        copies[0].style.cssText = `left:${PAD}px;top:${PAD}px;width:${w}px`;
+        copies[1].style.cssText = `left:${PAD}px;top:${PAD + ROW}px;width:${w}px`;
+        if (i === 0) return;
+        el.style.filter = `blur(${(blur * weight).toFixed(2)}px)`;
+        el.style.maskImage = el.style.webkitMaskImage =
+          ramp(['transparent', at((i - 1) / LAYERS)], ['#000', at(i / LAYERS)]);
+      });
+
+      // Dim glass: darker towards the free edge, deepest while upright
+      shade.style.background = ramp([`rgba(40,40,44,${.08 * sin * SHADE})`, yh], [`rgba(40,40,44,${.45 * sin * SHADE})`, yf]);
+    }
+
+    function frame(now) {
+      const dt = lastTime === null ? 0 : now - lastTime;
+      lastTime = now;
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const step = reduce ? 1 : dt / DURATION;
+      progress = target > progress ? Math.min(progress + step, target) : Math.max(progress - step, target);
+      render();
+      if (progress !== target) requestAnimationFrame(frame);
+      else lastTime = null;
+    }
+
+    function setOpen(open) {
+      const was = target;
+      target = open ? 1 : 0;
+      trigger.setAttribute('aria-expanded', open);
+      if (was === progress && target !== progress) requestAnimationFrame(frame);
+    }
+
+    trigger.addEventListener('click', () => setOpen(target === 0));
+
+    // Clicking elsewhere or pressing Escape closes it
+    document.addEventListener('click', e => { if (!dropdown.contains(e.target)) setOpen(false); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { setOpen(false); trigger.focus(); }
+    });
+
+    render();
+  </script>
+</body>
+</html>
