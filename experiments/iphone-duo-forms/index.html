@@ -17,16 +17,23 @@
       min-height: 100vh;
       padding: 16px;
       background: #eee;
+      overflow: hidden;  /* the flip's drawing area reaches past the page; never scroll for it */
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       -webkit-font-smoothing: antialiased;
+    }
+
+    .stage {
+      position: relative;
+      width: min(495px, 100%);
     }
 
     .card {
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
       gap: 32px;
-      width: min(495px, 100%);
+      width: 100%;
       padding: 40px;
       background: #fafafa;
       border-radius: 19px;
@@ -38,6 +45,27 @@
       font-size: 28px;
       font-weight: 600;
       color: #000;
+      text-align: center;
+    }
+
+    /* The last step swaps the fields and button for a confirmation */
+    .card:not(.done) :is(.check, .body),
+    .card.done :is(.fields, button) { display: none; }
+    .card.done { gap: 16px; }
+
+    .check {
+      width: 64px;
+      height: 64px;
+      flex: none;
+      margin-bottom: 8px;
+    }
+
+    .body {
+      max-width: 340px;
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.5;
+      color: #6c6c6c;
       text-align: center;
     }
 
@@ -75,6 +103,8 @@
     input:focus-visible { border-color: #c4c4c4; }
 
     button {
+      position: relative;
+      isolation: isolate;  /* keeps the hover layer behind the label */
       width: 100%;
       padding: 15px 10px;
       background: linear-gradient(to top, #151515, #363636);
@@ -87,29 +117,242 @@
       line-height: normal;
       color: #dadada;
       cursor: pointer;
+      transition: color .2s, transform .1s;
     }
+    /* Gradients can't transition, so a lighter one fades in over the top */
+    button::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      border-radius: inherit;
+      background: linear-gradient(to top, #252525, #4a4a4a);
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    button:hover { color: #fff; }
+    button:hover::after { opacity: 1; }
+    button:active { transform: translateY(1px); }
     button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 3px; }
+
+    /* The page in flight. Clipped to its outline in perspective: inside, the card shows through
+       flat, blurring towards the free edge; where the outline reaches past it, a light grey. */
+    .flap {
+      position: absolute;
+      pointer-events: none;
+      background: #e2e2e2;  /* a shade darker than the page */
+    }
+    .flap > * { position: absolute; inset: 0; }
+    .flap .card { position: absolute; }
+    /* The current step's left half, until the page lands on it */
+    .under {
+      position: absolute;
+      inset: 0;
+      clip-path: inset(0 50% 0 0);
+      filter: none;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
+  <div class="stage" id="stage">
   <form class="card" id="form" novalidate>
-    <h1>Make A Username</h1>
+    <svg class="check" viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="32" fill="#34c759"/>
+      <path d="M19 33.5 27.5 42 45 24" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1 id="title"></h1>
+    <p class="body">You're all set. We've sent a confirmation to your inbox, and you can sign in any time with your new username and password.</p>
     <div class="fields">
       <div class="field">
-        <label for="username">Username</label>
-        <input id="username" name="username" placeholder="JohnDoe123" autocomplete="username" spellcheck="false">
+        <label for="first"></label>
+        <input id="first" spellcheck="false">
       </div>
       <div class="field">
-        <label for="confirm">Confirm Username</label>
-        <input id="confirm" name="confirm" placeholder="JohnDoe123" autocomplete="off" spellcheck="false">
+        <label for="second"></label>
+        <input id="second" spellcheck="false">
       </div>
     </div>
-    <button type="submit">Submit</button>
+    <button type="submit" id="next"></button>
   </form>
+  <div class="flap" id="flap" hidden></div>
+  </div>
 
   <script>
-    // Nothing to send it to yet
-    document.getElementById('form').addEventListener('submit', e => e.preventDefault());
+    const steps = [
+      { title: 'Make A Username', label: 'Username', type: 'text', placeholder: 'JohnDoe123', autocomplete: 'username', button: 'Submit' },
+      { title: 'Add Your Email', label: 'Email Address', type: 'email', placeholder: 'john@example.com', autocomplete: 'email', button: 'Submit' },
+      { title: 'Create A Password', label: 'Password', type: 'password', placeholder: '••••••••••', autocomplete: 'new-password', button: 'Complete' },
+      { title: 'Account Created', done: true },
+    ];
+
+    const form = document.getElementById('form');
+    const title = document.getElementById('title');
+    const next = document.getElementById('next');
+    const [first, second] = form.querySelectorAll('input');
+    const [firstLabel, secondLabel] = form.querySelectorAll('label');
+
+    let step = 0;
+
+    function show(i) {
+      const s = steps[i];
+      title.textContent = s.title;
+      form.classList.toggle('done', !!s.done);
+      if (s.done) return;
+      firstLabel.textContent = s.label;
+      secondLabel.textContent = 'Confirm ' + s.label;
+      for (const input of [first, second]) {
+        input.value = '';
+        input.type = s.type;
+        input.placeholder = s.placeholder;
+      }
+      first.autocomplete = s.autocomplete;
+      second.autocomplete = s.type === 'password' ? 'new-password' : 'off';
+      next.textContent = s.button;
+    }
+
+    // The page turn between steps, built like the iPhone Duo Dropdown's flip: the card's right
+    // half lifts off a hinge down its middle and turns over onto the left half, like a book page.
+    // Its front shows the current step; its back, and the half it uncovers, show the next.
+    const stage = document.getElementById('stage');
+    const flap = document.getElementById('flap');
+
+    const DURATION = 1200;
+    const LAYERS = 6;        // blur steps from the hinge to the free edge
+    const MAX_BLUR = 12;     // px, at the free edge while the page stands upright
+    const DISTANCE = 1100;   // px from the viewer to the page; the dropdown's 340, scaled to the page's width
+    const EYE_SHIFT = 30;    // px the viewer sits right of the hinge, so the page never goes edge-on
+    const PAD = 200;         // room around the card for the page to grow into
+    const SHADE = .3;        // dimming over the page, darkest at its free edge
+    const RADIUS = 19;
+
+    // The page's outline in its own plane: u out from the hinge, v down. Its free corners are
+    // rounded like the card's; its hinge corners are square, since the card carries on past them.
+    function outline(pw, h) {
+      const r = RADIUS, pts = [[0, 0]];
+      const arc = (cu, cv, from, to) => {
+        for (let k = 0; k <= 6; k++) {
+          const a = from + (to - from) * k / 6;
+          pts.push([cu + r * Math.cos(a), cv + r * Math.sin(a)]);
+        }
+      };
+      const q = Math.PI / 2;
+      arc(pw - r, r, -q, 0);
+      arc(pw - r, h - r, 0, q);
+      pts.push([0, h]);
+      return pts;
+    }
+
+    const ease = t => t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+
+    // A lifeless copy of the card as it looks right now, typed values included
+    function snapshot() {
+      const copy = form.cloneNode(true);
+      for (const el of [copy, ...copy.querySelectorAll('[id]')]) el.removeAttribute('id');
+      copy.setAttribute('aria-hidden', 'true');
+      copy.inert = true;
+      return copy;
+    }
+
+    let flipping = false, progress = 0, lastTime = null, levels = [], shade, under, size;
+
+    function render() {
+      const angle = Math.PI * ease(progress);  // 0 = lying on the right half, π = turned onto the left
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const { w, h } = size, pw = w / 2;
+
+      // Rotate about the hinge, then project towards a viewer level with the card's middle
+      const hx = PAD + pw, ex = hx + EYE_SHIFT, ey = PAD + h / 2;
+      const project = (u, v) => {
+        const x = hx + u * cos, z = u * sin, k = DISTANCE / (DISTANCE - z);
+        return [ex + (x - ex) * k, ey + (PAD + v - ey) * k];
+      };
+      const pts = outline(pw, h).map(([u, v]) => project(u, v));
+      flap.style.clipPath = `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})`;
+
+      // Screen-space band from the hinge (sharp) to the free edge (blurriest)
+      const xf = project(pw, h / 2)[0];
+      const ramp = (from, to) => xf >= hx
+        ? `linear-gradient(to right, ${from[0]} ${from[1]}px, ${to[0]} ${to[1]}px)`
+        : `linear-gradient(to right, ${to[0]} ${to[1]}px, ${from[0]} ${from[1]}px)`;
+      const at = t => hx + (xf - hx) * t;
+
+      const blur = MAX_BLUR * sin ** .6;
+      const facing = angle < Math.PI / 2 ? 0 : 1;
+      levels.forEach(({ el, faces, weight }, i) => {
+        faces.forEach((face, f) => face.style.display = f === facing ? '' : 'none');
+        if (i === 0) return;
+        el.style.filter = `blur(${(blur * weight).toFixed(2)}px)`;
+        el.style.maskImage = el.style.webkitMaskImage =
+          ramp(['transparent', at((i - 1) / LAYERS)], ['#000', at(i / LAYERS)]);
+      });
+
+      // Dim glass: darker towards the free edge, deepest while upright
+      shade.style.background = ramp([`rgba(40,40,44,${.08 * sin * SHADE})`, hx], [`rgba(40,40,44,${.45 * sin * SHADE})`, xf]);
+    }
+
+    function frame(now) {
+      const dt = lastTime === null ? 0 : now - lastTime;
+      lastTime = now;
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      progress = Math.min(progress + (reduce ? 1 : dt / DURATION), 1);
+      render();
+      if (progress < 1) return requestAnimationFrame(frame);
+
+      flap.hidden = true;
+      flap.replaceChildren();
+      under.remove();
+      form.inert = false;
+      flipping = false;
+      lastTime = null;
+      if (!steps[step].done) first.focus();
+    }
+
+    function flip(to) {
+      size = { w: form.offsetWidth, h: form.offsetHeight };
+      form.style.minHeight = size.h + 'px';  // the confirmation is shorter; keep both faces the same size
+      const front = snapshot();
+      show(to);
+      const back = snapshot();
+
+      // Underneath, the real card is already on the next step; the current one's left half
+      // stays over it until the page lands
+      under = front.cloneNode(true);
+      under.classList.add('under');
+      stage.insertBefore(under, flap);
+
+      // Each blur level holds a copy of both faces, laid over the card's flat position
+      levels = [];
+      for (let i = 0; i <= LAYERS; i++) {
+        const el = document.createElement('div');
+        const faces = [front, back].map(face => {
+          const copy = face.cloneNode(true);
+          copy.style.cssText = `left:${PAD}px;top:${PAD}px;width:${size.w}px;height:${size.h}px`;
+          return copy;
+        });
+        el.append(...faces);
+        levels.push({ el, faces, weight: (i / LAYERS) ** 1.4 });
+      }
+      shade = document.createElement('div');
+      flap.replaceChildren(...levels.map(l => l.el), shade);
+      Object.assign(flap.style, { left: -PAD + 'px', top: -PAD + 'px', width: size.w + 2 * PAD + 'px', height: size.h + 2 * PAD + 'px' });
+
+      flipping = true;
+      progress = 0;
+      form.inert = true;
+      flap.hidden = false;
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    // Nothing to send it to yet; each submit flips to the next step, ending on the confirmation
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      if (flipping || steps[step].done) return;
+      flip(++step);
+    });
+
+    show(step);
   </script>
 </body>
 </html>
