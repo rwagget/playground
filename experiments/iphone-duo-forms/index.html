@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iPhone Duo Forms · Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      background: #eee;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 32px;
+      width: min(495px, 100%);
+      padding: 40px;
+      background: #fafafa;
+      border-radius: 19px;
+      filter: drop-shadow(0 23px 19px rgba(0, 0, 0, .04));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 600;
+      color: #000;
+      text-align: center;
+    }
+
+    .fields {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      width: 100%;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 20px;
+      color: #6c6c6c;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      background: #f3f3f3;
+      border: 1px solid #e2e2e2;
+      border-radius: 8px;
+      font: inherit;
+      font-size: 20px;
+      line-height: normal;
+      color: #1a1a1a;
+      outline: none;
+    }
+    input::placeholder { color: #afafaf; }
+    input:focus-visible { border-color: #c4c4c4; }
+
+    button {
+      width: 100%;
+      padding: 15px 10px;
+      background: linear-gradient(to top, #151515, #363636);
+      border: 0;
+      border-radius: 8px;
+      filter: drop-shadow(0 15px 11.15px rgba(0, 0, 0, .24));
+      font: inherit;
+      font-size: 20px;
+      font-weight: 500;
+      line-height: normal;
+      color: #dadada;
+      cursor: pointer;
+    }
+    button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <form class="card" id="form" novalidate>
+    <h1>Make A Username</h1>
+    <div class="fields">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" placeholder="JohnDoe123" autocomplete="username" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="confirm">Confirm Username</label>
+        <input id="confirm" name="confirm" placeholder="JohnDoe123" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+    <button type="submit">Submit</button>
+  </form>
+
+  <script>
+    // Nothing to send it to yet
+    document.getElementById('form').addEventListener('submit', e => e.preventDefault());
+  </script>
+</body>
+</html>
