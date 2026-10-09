@@ -117,7 +117,7 @@
       line-height: normal;
       color: #dadada;
       cursor: pointer;
-      transition: color .2s, transform .1s;
+      transition: color .2s;
     }
     /* Gradients can't transition, so a lighter one fades in over the top */
     button::after {
@@ -132,7 +132,6 @@
     }
     button:hover { color: #fff; }
     button:hover::after { opacity: 1; }
-    button:active { transform: translateY(1px); }
     button:focus-visible { outline: 2px solid #0a84ff; outline-offset: 3px; }
 
     /* The page in flight. Clipped to its outline in perspective: inside, the card shows through
