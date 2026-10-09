@@ -34,5 +34,11 @@
     "title": "iPhone Duo Forms",
     "description": "A three-step sign-up card that turns like a book page between steps, coming into focus through a progressive blur.",
     "date": "2026-10-06"
+  },
+  {
+    "slug": "metallic-shader",
+    "title": "Metallic Shader",
+    "description": "A metallic shader experiment.",
+    "date": "2026-10-09"
   }
 ]
