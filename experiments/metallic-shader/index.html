@@ -4,10 +4,375 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Metallic Shader · Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     html, body { margin: 0; height: 100%; }
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      background: #111;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .card {
+      width: min(478px, 100%);
+      padding: 28px 26px 24px;
+      background: #1c1c1c;
+      border: 1.5px solid #2b2b2b;
+      border-radius: 22px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .03),
+        0 24px 60px rgba(0, 0, 0, .55);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 32px;
+      line-height: 40px;
+    }
+    .title { color: #9b9b9b; }
+    .level {
+      color: #f2f2f2;
+      font-weight: 500;
+    }
+    .level.swap { animation: swap .28s cubic-bezier(.2, .8, .2, 1); }
+    @keyframes swap {
+      from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+    }
+    .help {
+      margin-left: auto;
+      width: 28px;
+      height: 28px;
+      color: #a3a3a3;
+      border-radius: 50%;
+      transition: color .2s;
+    }
+    .help:hover { color: #e6e6e6; }
+    .help svg { display: block; width: 100%; height: 100%; }
+
+    .ends {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 36px;
+      font-size: 27px;
+      line-height: 34px;
+      color: #9c9c9c;
+    }
+
+    .track {
+      position: relative;
+      height: 43px;
+      margin-top: 22px;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .rail {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #2b2b2b;
+      border-radius: 14px;
+    }
+    .fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0;
+      background: linear-gradient(90deg, #3a2a37, #a067a4);
+    }
+    .stop {
+      position: absolute;
+      top: 50%;
+      width: 6px;
+      height: 6px;
+      margin: -3px 0 0 -3px;
+      border-radius: 3px;
+      background: #8b8b8b;
+      transition: background .2s;
+    }
+    .stop.rec {
+      width: 5px;
+      height: 18px;
+      margin: -9px 0 0 -2.5px;
+      background: #b9b9b9;
+    }
+    .stop.on { background: rgba(255, 255, 255, .28); }
+    .stop.rec.on { background: rgba(255, 255, 255, .62); }
+
+    .thumb {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 52px;
+      height: 52px;
+      margin: -26px 0 0 -26px;
+      border-radius: 50%;
+      outline: none;
+      cursor: grab;
+    }
+    .thumb::before {
+      content: '';
+      position: absolute;
+      inset: -12px;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(255, 255, 255, .05), rgba(255, 255, 255, .03) 70%, transparent);
+      pointer-events: none;
+    }
+    .thumb:focus-visible::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px #0a84ff;
+    }
+    .brain {
+      display: block;
+      width: 100%;
+      height: 100%;
+      transition: scale .25s cubic-bezier(.34, 1.56, .64, 1);
+      filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .35));
+    }
+    .thumb:hover .brain { scale: 1.05; }
+    .dragging .thumb { cursor: grabbing; }
+    .dragging .brain { scale: 1.12; }
+
+    .under {
+      position: relative;
+      height: 34px;
+      margin-top: 16px;
+    }
+    .rec-label {
+      position: absolute;
+      top: 0;
+      translate: -50% 0;
+      font-size: 27px;
+      line-height: 34px;
+      color: #a8a8a8;
+      white-space: nowrap;
+      transition: color .2s;
+    }
+    .rec-label:hover { color: #e6e6e6; }
+
+    @media (max-width: 420px) {
+      header { font-size: 26px; }
+      .ends, .rec-label { font-size: 22px; }
+    }
   </style>
 </head>
 <body>
+  <div class="card">
+    <header>
+      <span class="title">Effort</span>
+      <span class="level" id="level"></span>
+      <button class="help" type="button" aria-label="What is effort?" title="How long the model thinks before answering">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10.5"/>
+          <path d="M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.6-2.8 2.6"/>
+          <path d="M12 17h.01" stroke-width="2.4"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="ends">
+      <span>Faster</span>
+      <span>Smarter</span>
+    </div>
+
+    <div class="track" id="track">
+      <div class="rail">
+        <div class="fill" id="fill"></div>
+      </div>
+      <div class="thumb" id="thumb" role="slider" tabindex="0" aria-label="Effort" aria-valuemin="0">
+        <!-- Lobes are drawn twice: once fat and dark for the outline, once pink on top -->
+        <svg class="brain" id="brain" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <g id="lobes">
+              <circle cx="38" cy="24" r="14"/>
+              <circle cx="24" cy="37" r="14"/>
+              <circle cx="20" cy="54" r="14"/>
+              <circle cx="27" cy="71" r="14"/>
+              <circle cx="41" cy="78" r="12"/>
+              <circle cx="38" cy="50" r="16"/>
+              <circle cx="62" cy="24" r="14"/>
+              <circle cx="76" cy="37" r="14"/>
+              <circle cx="80" cy="54" r="14"/>
+              <circle cx="73" cy="71" r="14"/>
+              <circle cx="59" cy="78" r="12"/>
+              <circle cx="62" cy="50" r="16"/>
+            </g>
+          </defs>
+          <use href="#lobes" fill="#6c1c42" stroke="#6c1c42" stroke-width="11"/>
+          <use href="#lobes" fill="#f6a2ca"/>
+          <g fill="none" stroke="#6c1c42" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M50 17V85"/>
+            <path d="M50 44H41q-5 0-6-5"/>
+            <path d="M22 60q8-3 12 3"/>
+            <path d="M50 64H59q5 0 6 5"/>
+            <path d="M78 42q-8 3-12-3"/>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="under">
+      <button class="rec-label" id="recLabel" type="button">Recommended</button>
+    </div>
+  </div>
+
+  <script>
+    const LEVELS = ['Low', 'Medium', 'High', 'Extra high', 'Ultra', 'Max'];
+    const RECOMMENDED = 1;
+    const EDGE = 24; // distance from the rail's ends to the first and last stop
+
+    const track = document.getElementById('track');
+    const fill = document.getElementById('fill');
+    const thumb = document.getElementById('thumb');
+    const brain = document.getElementById('brain');
+    const levelEl = document.getElementById('level');
+    const recLabel = document.getElementById('recLabel');
+
+    thumb.setAttribute('aria-valuemax', LEVELS.length - 1);
+
+    const stops = LEVELS.map((_, i) => {
+      const el = document.createElement('span');
+      el.className = 'stop' + (i === RECOMMENDED ? ' rec' : '');
+      track.querySelector('.rail').append(el);
+      return el;
+    });
+
+    let width = 0;
+    const stopX = i => EDGE + i * (width - 2 * EDGE) / (LEVELS.length - 1);
+    const nearest = x => Math.max(0, Math.min(LEVELS.length - 1,
+      Math.round((x - EDGE) / ((width - 2 * EDGE) / (LEVELS.length - 1)))));
+
+    let value = 2;
+    let x = 0, v = 0, target = 0;
+    let dragging = false;
+    let raf = 0;
+
+    function setLevel(i) {
+      if (i === value && levelEl.textContent) return;
+      value = i;
+      levelEl.textContent = LEVELS[i];
+      levelEl.classList.remove('swap');
+      void levelEl.offsetWidth;
+      levelEl.classList.add('swap');
+      thumb.setAttribute('aria-valuenow', i);
+      thumb.setAttribute('aria-valuetext', LEVELS[i]);
+    }
+
+    function render() {
+      fill.style.width = `${x}px`;
+      thumb.style.transform = `translateX(${x}px)`;
+      // Lean into the direction of travel
+      const tilt = Math.max(-16, Math.min(16, v * 0.025));
+      brain.style.rotate = `${tilt}deg`;
+      stops.forEach((el, i) => el.classList.toggle('on', stopX(i) < x - 1));
+    }
+
+    // Spring toward the target: stiff while dragging, bouncy when settling on a stop
+    let last = 0;
+    function tick(now) {
+      const dt = Math.min((now - last) / 1000, 1 / 30);
+      last = now;
+      const k = dragging ? 900 : 380;
+      const c = 2 * Math.sqrt(k) * (dragging ? 1 : 0.5);
+      for (let s = 0; s < 4; s++) {
+        const h = dt / 4;
+        v += (k * (target - x) - c * v) * h;
+        x += v * h;
+      }
+      render();
+      if (dragging || Math.abs(target - x) > 0.05 || Math.abs(v) > 0.5) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        x = target; v = 0; raf = 0;
+        render();
+      }
+    }
+    function animate() {
+      if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); }
+    }
+
+    function goTo(i) {
+      setLevel(i);
+      target = stopX(i);
+      animate();
+    }
+
+    function pointerX(e) {
+      const r = track.getBoundingClientRect();
+      return Math.max(EDGE, Math.min(width - EDGE, e.clientX - r.left));
+    }
+
+    track.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      track.setPointerCapture(e.pointerId);
+      dragging = true;
+      track.classList.add('dragging');
+      thumb.focus({ preventScroll: true, focusVisible: false });
+      target = pointerX(e);
+      setLevel(nearest(target));
+      animate();
+    });
+    track.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      target = pointerX(e);
+      setLevel(nearest(target));
+    });
+    const release = () => {
+      if (!dragging) return;
+      dragging = false;
+      track.classList.remove('dragging');
+      goTo(nearest(target));
+    };
+    track.addEventListener('pointerup', release);
+    track.addEventListener('pointercancel', release);
+
+    thumb.addEventListener('keydown', e => {
+      const keys = {
+        ArrowRight: value + 1, ArrowUp: value + 1,
+        ArrowLeft: value - 1, ArrowDown: value - 1,
+        Home: 0, End: LEVELS.length - 1,
+      };
+      if (!(e.key in keys)) return;
+      e.preventDefault();
+      goTo(Math.max(0, Math.min(LEVELS.length - 1, keys[e.key])));
+    });
+
+    recLabel.addEventListener('click', () => goTo(RECOMMENDED));
+
+    function layout() {
+      width = track.clientWidth;
+      stops.forEach((el, i) => { el.style.left = `${stopX(i)}px`; });
+      recLabel.style.left = `${stopX(RECOMMENDED)}px`;
+      x = target = stopX(value);
+      v = 0;
+      render();
+    }
+    new ResizeObserver(layout).observe(track);
+    setLevel(value);
+    layout();
+  </script>
 </body>
 </html>
