@@ -97,6 +97,7 @@
       position: absolute;
       inset: 0 auto 0 0;
       width: 0;
+      border-radius: 14px;
       background: linear-gradient(90deg, #3a2a37, #a067a4);
     }
     .stop {
@@ -117,6 +118,7 @@
     }
     .stop.on { background: rgba(255, 255, 255, .28); }
     .stop.rec.on { background: rgba(255, 255, 255, .62); }
+    .stop.current { background: #fff; }
 
     .thumb {
       position: absolute;
@@ -129,31 +131,14 @@
       outline: none;
       cursor: grab;
     }
-    .thumb::before {
-      content: '';
-      position: absolute;
-      inset: -12px;
-      border-radius: 50%;
-      background: radial-gradient(closest-side, rgba(255, 255, 255, .05), rgba(255, 255, 255, .03) 70%, transparent);
-      pointer-events: none;
-    }
     .thumb:focus-visible::after {
       content: '';
       position: absolute;
-      inset: -5px;
+      inset: 4px;
       border-radius: 50%;
       box-shadow: 0 0 0 2px #0a84ff;
     }
-    .brain {
-      display: block;
-      width: 100%;
-      height: 100%;
-      transition: scale .25s cubic-bezier(.34, 1.56, .64, 1);
-      filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .35));
-    }
-    .thumb:hover .brain { scale: 1.05; }
     .dragging .thumb { cursor: grabbing; }
-    .dragging .brain { scale: 1.12; }
 
     .under {
       position: relative;
@@ -201,36 +186,7 @@
       <div class="rail">
         <div class="fill" id="fill"></div>
       </div>
-      <div class="thumb" id="thumb" role="slider" tabindex="0" aria-label="Effort" aria-valuemin="0">
-        <!-- Lobes are drawn twice: once fat and dark for the outline, once pink on top -->
-        <svg class="brain" id="brain" viewBox="0 0 100 100" aria-hidden="true">
-          <defs>
-            <g id="lobes">
-              <circle cx="38" cy="24" r="14"/>
-              <circle cx="24" cy="37" r="14"/>
-              <circle cx="20" cy="54" r="14"/>
-              <circle cx="27" cy="71" r="14"/>
-              <circle cx="41" cy="78" r="12"/>
-              <circle cx="38" cy="50" r="16"/>
-              <circle cx="62" cy="24" r="14"/>
-              <circle cx="76" cy="37" r="14"/>
-              <circle cx="80" cy="54" r="14"/>
-              <circle cx="73" cy="71" r="14"/>
-              <circle cx="59" cy="78" r="12"/>
-              <circle cx="62" cy="50" r="16"/>
-            </g>
-          </defs>
-          <use href="#lobes" fill="#6c1c42" stroke="#6c1c42" stroke-width="11"/>
-          <use href="#lobes" fill="#f6a2ca"/>
-          <g fill="none" stroke="#6c1c42" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M50 17V85"/>
-            <path d="M50 44H41q-5 0-6-5"/>
-            <path d="M22 60q8-3 12 3"/>
-            <path d="M50 64H59q5 0 6 5"/>
-            <path d="M78 42q-8 3-12-3"/>
-          </g>
-        </svg>
-      </div>
+      <div class="thumb" id="thumb" role="slider" tabindex="0" aria-label="Effort" aria-valuemin="0"></div>
     </div>
 
     <div class="under">
@@ -246,7 +202,6 @@
     const track = document.getElementById('track');
     const fill = document.getElementById('fill');
     const thumb = document.getElementById('thumb');
-    const brain = document.getElementById('brain');
     const levelEl = document.getElementById('level');
     const recLabel = document.getElementById('recLabel');
 
@@ -281,12 +236,14 @@
     }
 
     function render() {
-      fill.style.width = `${x}px`;
+      // The fill runs just past the thumb so its rounded end wraps the current stop
+      fill.style.width = `${x + 18}px`;
       thumb.style.transform = `translateX(${x}px)`;
-      // Lean into the direction of travel
-      const tilt = Math.max(-16, Math.min(16, v * 0.025));
-      brain.style.rotate = `${tilt}deg`;
-      stops.forEach((el, i) => el.classList.toggle('on', stopX(i) < x - 1));
+      const at = nearest(x);
+      stops.forEach((el, i) => {
+        el.classList.toggle('current', i === at);
+        el.classList.toggle('on', i !== at && stopX(i) < x);
+      });
     }
 
     // Spring toward the target: stiff while dragging, bouncy when settling on a stop
