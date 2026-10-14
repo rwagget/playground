@@ -34,7 +34,7 @@
 
     .card {
       width: min(478px, 100%);
-      padding: 28px 26px 24px;
+      padding: 28px 26px;
       background: #1c1c1c;
       border: 1.5px solid #2b2b2b;
       border-radius: 22px;
@@ -59,16 +59,6 @@
     @keyframes swap {
       from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
     }
-    .help {
-      margin-left: auto;
-      width: 28px;
-      height: 28px;
-      color: #a3a3a3;
-      border-radius: 50%;
-      transition: color .2s;
-    }
-    .help:hover { color: #e6e6e6; }
-    .help svg { display: block; width: 100%; height: 100%; }
 
     .ends {
       display: flex;
@@ -140,26 +130,9 @@
     }
     .dragging .thumb { cursor: grabbing; }
 
-    .under {
-      position: relative;
-      height: 34px;
-      margin-top: 16px;
-    }
-    .rec-label {
-      position: absolute;
-      top: 0;
-      translate: -50% 0;
-      font-size: 27px;
-      line-height: 34px;
-      color: #a8a8a8;
-      white-space: nowrap;
-      transition: color .2s;
-    }
-    .rec-label:hover { color: #e6e6e6; }
-
     @media (max-width: 420px) {
       header { font-size: 26px; }
-      .ends, .rec-label { font-size: 22px; }
+      .ends { font-size: 22px; }
     }
   </style>
 </head>
@@ -168,13 +141,6 @@
     <header>
       <span class="title">Effort</span>
       <span class="level" id="level"></span>
-      <button class="help" type="button" aria-label="What is effort?" title="How long the model thinks before answering">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10.5"/>
-          <path d="M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.6-2.8 2.6"/>
-          <path d="M12 17h.01" stroke-width="2.4"/>
-        </svg>
-      </button>
     </header>
 
     <div class="ends">
@@ -189,9 +155,6 @@
       <div class="thumb" id="thumb" role="slider" tabindex="0" aria-label="Effort" aria-valuemin="0"></div>
     </div>
 
-    <div class="under">
-      <button class="rec-label" id="recLabel" type="button">Recommended</button>
-    </div>
   </div>
 
   <script>
@@ -203,7 +166,6 @@
     const fill = document.getElementById('fill');
     const thumb = document.getElementById('thumb');
     const levelEl = document.getElementById('level');
-    const recLabel = document.getElementById('recLabel');
 
     thumb.setAttribute('aria-valuemax', LEVELS.length - 1);
 
@@ -317,12 +279,9 @@
       goTo(Math.max(0, Math.min(LEVELS.length - 1, keys[e.key])));
     });
 
-    recLabel.addEventListener('click', () => goTo(RECOMMENDED));
-
     function layout() {
       width = track.clientWidth;
       stops.forEach((el, i) => { el.style.left = `${stopX(i)}px`; });
-      recLabel.style.left = `${stopX(RECOMMENDED)}px`;
       x = target = stopX(value);
       v = 0;
       render();
