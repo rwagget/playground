@@ -100,14 +100,7 @@
       background: #8b8b8b;
       transition: background .2s;
     }
-    .stop.rec {
-      width: 5px;
-      height: 18px;
-      margin: -9px 0 0 -2.5px;
-      background: #b9b9b9;
-    }
     .stop.on { background: rgba(255, 255, 255, .28); }
-    .stop.rec.on { background: rgba(255, 255, 255, .62); }
     .stop.current { background: #fff; }
 
     .thumb {
@@ -159,7 +152,6 @@
 
   <script>
     const LEVELS = ['Low', 'Medium', 'High', 'Extra high', 'Ultra', 'Max'];
-    const RECOMMENDED = 1;
     const EDGE = 24; // distance from the rail's ends to the first and last stop
 
     const track = document.getElementById('track');
@@ -169,9 +161,9 @@
 
     thumb.setAttribute('aria-valuemax', LEVELS.length - 1);
 
-    const stops = LEVELS.map((_, i) => {
+    const stops = LEVELS.map(() => {
       const el = document.createElement('span');
-      el.className = 'stop' + (i === RECOMMENDED ? ' rec' : '');
+      el.className = 'stop';
       track.querySelector('.rail').append(el);
       return el;
     });
