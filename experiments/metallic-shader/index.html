@@ -43,27 +43,24 @@
         0 24px 60px rgba(0, 0, 0, .55);
     }
 
-    header {
-      display: flex;
-      align-items: center;
-      gap: 18px;
-      font-size: 32px;
-      line-height: 40px;
-    }
-    .title { color: #9b9b9b; }
-    .level {
-      color: #f2f2f2;
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 36px;
       font-weight: 500;
+      color: #f2f2f2;
     }
-    .level.swap { animation: swap .28s cubic-bezier(.2, .8, .2, 1); }
-    @keyframes swap {
-      from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+    .note {
+      margin: 8px 0 0;
+      font-size: 20px;
+      line-height: 28px;
+      color: #9b9b9b;
     }
 
     .ends {
       display: flex;
       justify-content: space-between;
-      margin-top: 36px;
+      margin-top: 32px;
       font-size: 27px;
       line-height: 34px;
       color: #9c9c9c;
@@ -124,17 +121,16 @@
     .dragging .thumb { cursor: grabbing; }
 
     @media (max-width: 420px) {
-      header { font-size: 26px; }
+      h1 { font-size: 24px; line-height: 32px; }
+      .note { font-size: 17px; line-height: 24px; }
       .ends { font-size: 22px; }
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <header>
-      <span class="title">Effort</span>
-      <span class="level" id="level"></span>
-    </header>
+    <h1>Reasoning effort</h1>
+    <p class="note">Higher effort can improve complex answers, but takes longer.</p>
 
     <div class="ends">
       <span>Faster</span>
@@ -157,7 +153,6 @@
     const track = document.getElementById('track');
     const fill = document.getElementById('fill');
     const thumb = document.getElementById('thumb');
-    const levelEl = document.getElementById('level');
 
     thumb.setAttribute('aria-valuemax', LEVELS.length - 1);
 
@@ -179,12 +174,7 @@
     let raf = 0;
 
     function setLevel(i) {
-      if (i === value && levelEl.textContent) return;
       value = i;
-      levelEl.textContent = LEVELS[i];
-      levelEl.classList.remove('swap');
-      void levelEl.offsetWidth;
-      levelEl.classList.add('swap');
       thumb.setAttribute('aria-valuenow', i);
       thumb.setAttribute('aria-valuetext', LEVELS[i]);
     }
